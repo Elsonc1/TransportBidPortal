@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transport Bidding Portal</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__left">
+      <button id="sidebarToggleBtn" class="topbar__menu-btn hidden" onclick="sidebarToggle()" title="Menu">&#9776;</button>
+      <h1>Transport Bidding Portal</h1>
+    </div>
+    <div id="userChip"></div>
+  </header>
+
+  <!-- LOGIN -->
+  <main id="authWrapper" class="container">
+    <section id="authCard" class="card" style="max-width:440px;margin:60px auto">
+      <h2>Secure Login</h2>
+      <div class="grid2">
+        <input id="email" placeholder="Email" value="shipper@demo.com" />
+        <input id="password" type="password" placeholder="Password" value="Demo@123" />
+      </div>
+      <button onclick="login()">Login</button>
+      <p class="hint">Demo: shipper@demo.com, carrier1@demo.com, carrier2@demo.com, admin@demo.com (senha Demo@123)</p>
+    </section>
+  </main>
+
+  <!-- APP SHELL (sidebar + content) -->
+  <div id="appShell" class="app-shell hidden">
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar" class="sidebar sidebar--collapsed">
+      <div class="sidebar__pin">
+        <button onclick="sidebarPin()" id="sidebarPinBtn" title="Fixar menu">&#x1F4CC;</button>
+      </div>
+      <nav class="sidebar__nav" id="sidebarNav"></nav>
+    </aside>
+
+    <!-- CONTENT -->
+    <div class="app-content" id="appContent">
+
+      <!-- ========== SHIPPER SECTIONS ========== -->
+      <section data-page="facilities" class="page-section hidden">
+        <div class="card studio-card">
+          <div class="studio-header">
+            <div class="studio-header__left">
+              <h3 class="studio-header__title">Unidades / Centros de Distribui&#231;&#227;o</h3>
+              <span class="studio-header__subtitle">Cadastre a matriz e filiais &#8212; elas ser&#227;o usadas como origem nos BIDs</span>
+            </div>
+            <div class="studio-header__right">
+              <button class="studio-btn studio-btn--accent" onclick="facilityShowForm()">
+                <span class="studio-icon">&#x2795;</span> Nova Unidade
+              </button>
+            </div>
+          </div>
+
+          <div id="facilityForm" class="facility-form hidden">
+            <input type="hidden" id="facilityEditId" value="" />
+            <div class="facility-form__grid">
+              <div class="log-filter-group grow">
+                <label>CNPJ</label>
+                <input type="text" id="facilityCnpj" placeholder="00.000.000/0000-00" oninput="facilityCnpjCheck()" />
+                <span id="facilityCnpjHint" class="hint" style="margin-top:2px"></span>
+              </div>
+              <div class="log-filter-group">
+                <label>Tipo (auto-detectado)</label>
+                <select id="facilityType" disabled>
+                  <option value="Matriz">Matriz</option>
+                  <option value="Filial">Filial</option>
+                </select>
+              </div>
+              <div class="log-filter-group grow">
+                <label>Nome (ex: CD S&#227;o Paulo)</label>
+                <input type="text" id="facilityName" placeholder="CD S&#227;o Paulo" />
+              </div>
+            </div>
+            <div class="facility-form__grid">
+              <div class="log-filter-group grow">
+                <label>Endere&#231;o</label>
+                <input type="text" id="facilityAddress" placeholder="Av. Paulista, 1000" />
+              </div>
+              <div class="log-filter-group">
+                <label>Cidade</label>
+                <input type="text" id="facilityCity" placeholder="S&#227;o Paulo" />
+              </div>
+              <div class="log-filter-group">
+                <label>UF</label>
+                <input type="text" id="facilityState" placeholder="SP" maxlength="2" style="width:60px" />
+              </div>
+              <div class="log-filter-group">
+                <label>CEP</label>
+                <input type="text" id="facilityZip" placeholder="01310-100" />
+              </div>
+            </div>
+            <div class="facility-form__actions">
+              <button class="studio-btn studio-btn--primary" onclick="facilitySave()">Salvar</button>
+              <button class="studio-btn studio-btn--outline" onclick="facilityCancelForm()">Cancelar</button>
+            </div>
+          </div>
+
+          <div class="studio-grid-wrapper">
+            <table class="studio-grid" id="facilityGrid">
+              <thead>
+                <tr>
+                  <th class="studio-grid__th">Tipo</th>
+                  <th class="studio-grid__th">Nome</th>
+                  <th class="studio-grid__th">CNPJ</th>
+                  <th class="studio-grid__th">Endere&#231;o</th>
+                  <th class="studio-grid__th">Cidade</th>
+                  <th class="studio-grid__th">UF</th>
+                  <th class="studio-grid__th">CEP</th>
+                  <th class="studio-grid__th studio-grid__th--center">Ativo</th>
+                  <th class="studio-grid__th studio-grid__th--center">A&#231;&#245;es</th>
+                </tr>
+              </thead>
+              <tbody id="facilityGridBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section data-page="bid-create" class="page-section hidden">
+        <div class="card">
+          <h2>Criar BID</h2>
+          <div class="drop-zone" id="dropZone">
+            <p>Drag and drop Excel file here</p>
+            <input id="excelFile" type="file" accept=".xlsx,.xls" />
+          </div>
+          <div class="grid3">
+            <input id="bidTitle" placeholder="BID title" value="RFQ Rodoviario 2026" />
+            <select id="auctionType">
+              <option value="Open">Open</option>
+              <option value="Sealed">Sealed</option>
+              <option value="MultiRound">Multi-Round</option>
+            </select>
+            <input id="deadline" type="datetime-local" />
+            <input id="requiredDocs" placeholder="Required docs" value="ANTT, Insurance, Compliance" />
+            <input id="baselineValue" type="number" step="0.01" placeholder="Baseline contract value" value="900000" />
+            <select id="mappingProfileSelect"><option value="">Auto mapping padr&#227;o</option></select>
+            <button onclick="createBidFromExcel()">Create BID from Excel</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>BIDs</h3>
+          <div id="bidList"></div>
+        </div>
+
+        <div class="card">
+          <h3>Invite Carriers</h3>
+          <div class="grid2">
+            <select id="bidToInvite"></select>
+            <button onclick="inviteCarriers()">Send Invitations</button>
+          </div>
+          <div id="carrierChecklist"></div>
+        </div>
+      </section>
+
+      <section data-page="template-studio" class="page-section hidden">
+        <div class="card studio-card">
+          <div class="studio-header">
+            <div class="studio-header__left">
+              <h3 class="studio-header__title">BID Template Studio</h3>
+              <span class="studio-header__subtitle">Defina as colunas do seu template de BID e exporte para Excel</span>
+            </div>
+            <div class="studio-header__right">
+              <select id="templateSelect" class="studio-select"></select>
+              <button class="studio-btn studio-btn--outline" onclick="loadTemplates()" title="Recarregar">&#x21bb;</button>
+            </div>
+          </div>
+          <div class="studio-toolbar">
+            <div class="studio-toolbar__left">
+              <input id="templateName" class="studio-input" placeholder="Nome do template" value="Template Cliente Custom" />
+              <label class="studio-check"><input type="checkbox" id="templateIsDefault" /> Padr&#227;o</label>
+            </div>
+            <div class="studio-toolbar__actions">
+              <button class="studio-btn studio-btn--primary" onclick="createTemplate()">&#x1F4BE; Salvar Template</button>
+              <button class="studio-btn studio-btn--success" onclick="downloadTemplateExcel()">&#x1F4E5; Exportar Excel</button>
+              <button class="studio-btn studio-btn--accent" onclick="studioAddRow()">&#x2795; Nova Coluna</button>
+            </div>
+          </div>
+          <div class="studio-grid-wrapper">
+            <table class="studio-grid" id="studioGrid">
+              <thead>
+                <tr>
+                  <th class="studio-grid__th studio-grid__th--order">#</th>
+                  <th class="studio-grid__th">Campo (Key)</th>
+                  <th class="studio-grid__th">Nome Exibi&#231;&#227;o</th>
+                  <th class="studio-grid__th studio-grid__th--wide">Aliases (sin&#244;nimos csv)</th>
+                  <th class="studio-grid__th studio-grid__th--center">Obrigat&#243;rio</th>
+                  <th class="studio-grid__th">Tipo</th>
+                  <th class="studio-grid__th studio-grid__th--center">A&#231;&#245;es</th>
+                </tr>
+              </thead>
+              <tbody id="studioGridBody"></tbody>
+            </table>
+          </div>
+          <div class="studio-footer">
+            <div class="studio-footer__map">
+              <span class="studio-footer__label">Testar mapeamento:</span>
+              <input id="templateMapFile" type="file" accept=".xlsx,.xls" class="studio-input studio-input--file" />
+              <button class="studio-btn studio-btn--outline" onclick="mapExcelTemplate()">&#x1F50D; Mapear</button>
+            </div>
+            <div id="templateMappingResult" class="studio-mapping-result"></div>
+          </div>
+        </div>
+      </section>
+
+      <section data-page="excel-mapper" class="page-section hidden">
+        <div class="card studio-card">
+          <div class="studio-header">
+            <div class="studio-header__left">
+              <h3 class="studio-header__title">Mapeamento Excel &rarr; Portal</h3>
+              <span class="studio-header__subtitle">Importe qualquer planilha, visualize, selecione a linha de cabe&#231;alho e mapeie as colunas &#8212; 100% low-code</span>
+            </div>
+          </div>
+          <div class="mapper-wizard">
+            <div class="mapper-steps">
+              <div class="mapper-step mapper-step--active" data-step="1"><span class="mapper-step__number">1</span><span class="mapper-step__label">Upload &amp; Revisar</span></div>
+              <div class="mapper-step-arrow">&rarr;</div>
+              <div class="mapper-step" data-step="2"><span class="mapper-step__number">2</span><span class="mapper-step__label">Mapear Colunas</span></div>
+              <div class="mapper-step-arrow">&rarr;</div>
+              <div class="mapper-step" data-step="3"><span class="mapper-step__number">3</span><span class="mapper-step__label">Pr&#233;-visualizar</span></div>
+            </div>
+            <div id="mapperStep1" class="mapper-panel">
+              <div class="mapper-row">
+                <div class="log-filter-group grow"><label>Planilha (.xlsx)</label><input type="file" id="mapperFile" accept=".xlsx,.xls" class="studio-input studio-input--file" onchange="mapperUploadAndPreview()" /></div>
+                <div class="log-filter-group"><label>Template</label><select id="mapperTemplateSelect" class="studio-select"></select></div>
+              </div>
+              <div id="mapperRawContainer" class="hidden">
+                <div class="ep-hint"><span class="ep-hint-icon">&#x1F4A1;</span> Clique na <strong>linha</strong> que cont&#233;m os cabe&#231;alhos. Detectado: linha <span id="mapperDetectedRow" class="ep-selected-info"></span></div>
+                <div class="mapper-info-bar"><span id="mapperRawSheetInfo"></span><span id="mapperSelectedRowInfo" class="ep-selected-info"></span></div>
+                <div class="excel-preview-wrapper"><table class="excel-preview" id="mapperRawGrid"><thead id="mapperRawHead"></thead><tbody id="mapperRawBody"></tbody></table></div>
+                <div class="mapper-actions"><button class="studio-btn studio-btn--primary" onclick="mapperConfirmHeaderAndAutoMap()">Confirmar Cabe&#231;alho e Mapear &rarr;</button></div>
+              </div>
+            </div>
+            <div id="mapperStep2" class="mapper-panel hidden">
+              <div class="mapper-info-bar"><span id="mapperSheetInfo"></span><span id="mapperHeaderInfo" class="ep-selected-info"></span></div>
+              <div class="studio-grid-wrapper"><table class="studio-grid" id="mapperMappingGrid"><thead><tr><th class="studio-grid__th">Campo do Template</th><th class="studio-grid__th">Obrig.</th><th class="studio-grid__th studio-grid__th--wide">Coluna do Excel (origem)</th><th class="studio-grid__th studio-grid__th--center">Confian&#231;a</th></tr></thead><tbody id="mapperMappingBody"></tbody></table></div>
+              <div class="mapper-actions"><button class="studio-btn studio-btn--outline" onclick="mapperGoStep(1)">&larr; Voltar</button><button class="studio-btn studio-btn--primary" onclick="mapperPreview()">Pr&#233;-visualizar &rarr;</button></div>
+            </div>
+            <div id="mapperStep3" class="mapper-panel hidden">
+              <div class="mapper-info-bar"><span id="mapperPreviewInfo"></span></div>
+              <div class="studio-grid-wrapper" style="max-height:420px;overflow:auto"><table class="studio-grid" id="mapperPreviewGrid"><thead id="mapperPreviewHead"></thead><tbody id="mapperPreviewBody"></tbody></table></div>
+              <div class="mapper-actions"><button class="studio-btn studio-btn--outline" onclick="mapperGoStep(2)">&larr; Voltar</button><button class="studio-btn studio-btn--success" onclick="mapperExportAll()">&#x1F4E5; Exportar Excel Completo</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section data-page="dashboard" class="page-section hidden">
+        <div class="card">
+          <h3>Ranking &amp; BI Dashboard</h3>
+          <div class="grid4 kpis">
+            <div class="kpi"><label>Total projected savings</label><strong id="kpiSavings">-</strong></div>
+            <div class="kpi"><label>Cost vs previous contract</label><strong id="kpiCost">-</strong></div>
+            <div class="kpi"><label>Carrier performance index</label><strong id="kpiPerf">-</strong></div>
+            <div class="kpi"><label>Auction countdown</label><strong id="countdown">-</strong></div>
+          </div>
+          <div class="grid3">
+            <select id="dashboardBid"></select>
+            <input id="filterRegion" placeholder="Filter region" />
+            <button onclick="loadDashboard()">Load Dashboard</button>
+          </div>
+          <div class="charts"><canvas id="priceChart"></canvas><canvas id="deviationChart"></canvas><canvas id="heatmapChart"></canvas></div>
+          <div class="actions"><button onclick="exportDashboard('excel')">Export Excel</button><button onclick="exportDashboard('pdf')">Export PDF</button></div>
+        </div>
+        <div class="card"><h3>Audit Log</h3><div id="auditLog"></div></div>
+      </section>
+
+      <!-- ========== CARRIER SECTIONS ========== -->
+      <section data-page="carrier-bids" class="page-section hidden">
+        <div class="card"><h2>Carrier Portal</h2><button onclick="loadInvitedBids()">Refresh invited BIDs</button><div id="invitedBids"></div></div>
+        <div class="card">
+          <h3>Proposal Submission</h3>
+          <div class="grid3"><select id="carrierBidSelect"></select><input id="capacity" type="number" placeholder="Capacity (tons)" value="400" /><label><input type="checkbox" id="slaCompliant" checked /> SLA compliant</label></div>
+          <div id="lanePricing"></div>
+          <div class="actions"><button onclick="saveProposalDraft()">Save Draft</button><button onclick="submitProposal()">Submit Final</button></div>
+          <div id="proposalVersions"></div>
+        </div>
+        <div class="card"><h3>Notifications</h3><div id="notifications"></div></div>
+      </section>
+
+      <!-- ========== ADMIN SECTIONS ========== -->
+      <section data-page="admin-profiles" class="page-section hidden">
+        <div class="card"><h2>Admin Support Portal</h2><p class="hint">Configure perfis de mapeamento para cada embarcador.</p>
+          <div class="grid3"><select id="adminShipperSelect"></select><select id="adminProfileSelect"></select><button onclick="loadAdminProfiles()">Carregar Perfis</button></div>
+          <div class="actions"><button onclick="newAdminProfile()">Novo Perfil</button><button onclick="saveAdminProfile()">Salvar Perfil</button></div>
+        </div>
+        <div class="card"><h3>Grid de Mapeamento</h3>
+          <table class="table editable-grid" id="adminMappingGrid"><thead><tr><th>CanonicalField</th><th>DisplayName</th><th>Aliases (csv)</th><th>Required</th><th>DataType</th><th>SortOrder</th></tr></thead><tbody id="adminGridBody"></tbody></table>
+          <div class="actions"><button onclick="addAdminGridRow()">Adicionar Linha</button></div>
+        </div>
+        <div class="card"><h3>Teste com Planilha</h3><div class="grid2"><input id="adminAnalyzeFile" type="file" accept=".xlsx,.xls" /><button onclick="analyzeAdminProfile()">Analisar</button></div><div id="adminAnalyzeResult"></div></div>
+      </section>
+
+      <section data-page="admin-logs" class="page-section hidden">
+        <div class="card"><h2>System Logs</h2><p class="hint">Visualiza&#231;&#227;o estruturada &#8212; cada requisi&#231;&#227;o carrega um CorrelationId.</p>
+          <div id="logStatsCards" class="log-stats-row"></div>
+          <div class="log-filters">
+            <div class="log-filter-row">
+              <div class="log-filter-group"><label>Data in&#237;cio</label><input type="datetime-local" id="logFilterFrom" /></div>
+              <div class="log-filter-group"><label>Data fim</label><input type="datetime-local" id="logFilterTo" /></div>
+              <div class="log-filter-group"><label>Level</label><select id="logFilterLevel"><option value="">Todos</option><option value="Info">Info</option><option value="Warn">Warning</option><option value="Error">Error</option><option value="Debug">Debug</option></select></div>
+              <div class="log-filter-group"><label>Servi&#231;o</label><select id="logFilterService"><option value="">Todos</option></select></div>
+            </div>
+            <div class="log-filter-row">
+              <div class="log-filter-group grow"><label>Buscar texto</label><input type="text" id="logFilterText" placeholder="Mensagem, stack trace..." /></div>
+              <div class="log-filter-group"><label>CorrelationId</label><input type="text" id="logFilterCorrelation" placeholder="abc123..." /></div>
+              <div class="log-filter-group"><label>Usu&#225;rio</label><input type="text" id="logFilterUser" placeholder="user@..." /></div>
+            </div>
+            <div class="log-filter-actions"><button onclick="searchLogs(1)">Buscar</button><button class="btn-secondary" onclick="clearLogFilters()">Limpar</button></div>
+          </div>
+          <div id="logTableContainer"></div>
+        </div>
+      </section>
+
+    </div><!-- /app-content -->
+  </div><!-- /app-shell -->
+
+  <script src="./app.js"></script>
+</body>
+</html>

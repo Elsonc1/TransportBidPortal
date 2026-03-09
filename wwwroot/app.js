@@ -1,0 +1,1403 @@
+let token = "";
+let userRole = "";
+let selectedBidDeadline = null;
+let priceChart;
+let deviationChart;
+let heatmapChart;
+let adminProfiles = [];
+let logCurrentPage = 1;
+let sidebarPinned = false;
+const API_BASE = window.location.protocol === "file:" ? "http://localhost:5157" : "";
+
+function generateCorrelationId() {
+  return crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "").slice(0, 12) : Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function apiUrl(path) {
+  return `${API_BASE}${path}`;
+}
+
+function authHeaders() {
+  return { Authorization: `Bearer ${token}`, "X-Correlation-Id": generateCorrelationId() };
+}
+
+function setDefaultDeadline() {
+  const now = new Date(Date.now() + 86400000);
+  document.getElementById("deadline").value = now.toISOString().slice(0, 16);
+}
+
+/* ---------- SIDEBAR ---------- */
+
+const SIDEBAR_MENUS = {
+  Shipper: [
+    { id: "facilities", icon: "&#x1F3E2;", label: "Unidades (CDs)" },
+    { id: "bid-create", icon: "&#x1F4CB;", label: "Criar BID" },
+    { id: "template-studio", icon: "&#x1F527;", label: "Template Studio" },
+    { id: "excel-mapper", icon: "&#x1F4CA;", label: "Mapeamento Excel" },
+    { divider: true },
+    { id: "dashboard", icon: "&#x1F4C8;", label: "Dashboard & Ranking" }
+  ],
+  Carrier: [
+    { id: "carrier-bids", icon: "&#x1F4E6;", label: "BIDs & Propostas" }
+  ],
+  Admin: [
+    { id: "admin-profiles", icon: "&#x2699;", label: "Perfis Mapeamento" },
+    { id: "admin-logs", icon: "&#x1F4DD;", label: "System Logs" }
+  ]
+};
+
+function sidebarBuild(role) {
+  const nav = document.getElementById("sidebarNav");
+  nav.innerHTML = "";
+  const items = SIDEBAR_MENUS[role] || [];
+  items.forEach(item => {
+    if (item.divider) {
+      const hr = document.createElement("div");
+      hr.className = "sb-divider";
+      nav.appendChild(hr);
+      return;
+    }
+    const div = document.createElement("div");
+    div.className = "sb-item";
+    div.dataset.page = item.id;
+    div.innerHTML = `<span class="sb-icon">${item.icon}</span><span class="sidebar__label">${item.label}</span>`;
+    div.addEventListener("click", () => navigateTo(item.id));
+    nav.appendChild(div);
+  });
+}
+
+function navigateTo(pageId) {
+  document.querySelectorAll(".page-section").forEach(s => s.classList.add("hidden"));
+  const target = document.querySelector(`.page-section[data-page="${pageId}"]`);
+  if (target) target.classList.remove("hidden");
+
+  document.querySelectorAll(".sb-item").forEach(el => {
+    el.classList.toggle("sb-item--active", el.dataset.page === pageId);
+  });
+}
+
+function sidebarToggle() {
+  const sb = document.getElementById("sidebar");
+  if (sidebarPinned) {
+    sidebarPinned = false;
+    sb.classList.remove("sidebar--pinned");
+    sb.classList.add("sidebar--collapsed");
+  } else {
+    sidebarPinned = true;
+    sb.classList.remove("sidebar--collapsed");
+    sb.classList.add("sidebar--pinned");
+  }
+}
+
+function sidebarPin() {
+  sidebarPinned = !sidebarPinned;
+  const sb = document.getElementById("sidebar");
+  if (sidebarPinned) {
+    sb.classList.remove("sidebar--collapsed");
+    sb.classList.add("sidebar--pinned");
+  } else {
+    sb.classList.add("sidebar--collapsed");
+    sb.classList.remove("sidebar--pinned");
+  }
+}
+
+/* ---------- LOGIN ---------- */
+
+async function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const res = await fetch(apiUrl("/api/auth/login"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Correlation-Id": generateCorrelationId() },
+    body: JSON.stringify({ email, password })
+  });
+  if (!res.ok) return alert("Login failed.");
+
+  const data = await res.json();
+  token = data.token;
+  userRole = data.role;
+  document.getElementById("authWrapper").classList.add("hidden");
+  document.getElementById("appShell").classList.remove("hidden");
+  document.getElementById("sidebarToggleBtn").classList.remove("hidden");
+  document.getElementById("userChip").textContent = `${data.name} (${data.role})`;
+
+  sidebarBuild(userRole);
+
+  if (userRole === "Shipper") {
+    navigateTo("facilities");
+    await loadFacilities();
+    await loadCarriers();
+    await loadShipperMappingProfiles();
+    await loadTemplates();
+    await loadBids();
+    await loadAudit();
+  } else if (userRole === "Admin") {
+    navigateTo("admin-profiles");
+    await loadAdminShippers();
+    await loadAdminProfiles();
+    await loadLogServices();
+    await searchLogs();
+  } else {
+    navigateTo("carrier-bids");
+    await loadInvitedBids();
+    await loadNotifications();
+  }
+}
+
+/* ---------- FACILITIES (Matriz / Filiais) ---------- */
+
+let facilitiesCache = [];
+
+async function loadFacilities() {
+  const res = await fetch(apiUrl("/api/shipper/facilities"), { headers: authHeaders() });
+  if (!res.ok) return;
+  facilitiesCache = await res.json();
+  renderFacilityGrid();
+}
+
+function renderFacilityGrid() {
+  const tbody = document.getElementById("facilityGridBody");
+  if (!facilitiesCache.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#8a9ab8;padding:20px">Nenhuma unidade cadastrada. Clique em "Nova Unidade" para começar.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = facilitiesCache.map(f => {
+    const typeCls = f.type === "Matriz" ? "facility-badge--matriz" : "facility-badge--filial";
+    const activeCls = f.isActive ? "facility-active" : "facility-inactive";
+    return `<tr>
+      <td><span class="facility-badge ${typeCls}">${f.type}</span></td>
+      <td><strong>${f.name}</strong></td>
+      <td style="font-family:monospace;font-size:12px">${f.cnpj}</td>
+      <td>${f.address}</td>
+      <td>${f.city}</td>
+      <td>${f.state}</td>
+      <td>${f.zipCode}</td>
+      <td class="studio-td--center"><span class="${activeCls}">${f.isActive ? "Sim" : "Não"}</span></td>
+      <td class="studio-td--actions">
+        <button class="studio-btn studio-btn--outline" style="padding:4px 8px;font-size:12px" onclick="facilityEdit('${f.id}')">Editar</button>
+        <button class="studio-btn--danger" onclick="facilityDelete('${f.id}','${f.name}')">&#x2716;</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function facilityShowForm() {
+  document.getElementById("facilityEditId").value = "";
+  document.getElementById("facilityType").value = "Filial";
+  document.getElementById("facilityName").value = "";
+  document.getElementById("facilityCnpj").value = "";
+  document.getElementById("facilityAddress").value = "";
+  document.getElementById("facilityCity").value = "";
+  document.getElementById("facilityState").value = "";
+  document.getElementById("facilityZip").value = "";
+  document.getElementById("facilityCnpjHint").textContent = "";
+  document.getElementById("facilityForm").classList.remove("hidden");
+  document.getElementById("facilityCnpj").focus();
+}
+
+function cnpjExtractBase(cnpj) {
+  return cnpj.replace(/\D/g, "").slice(0, 8);
+}
+
+function cnpjExtractBranch(cnpj) {
+  return cnpj.replace(/\D/g, "").slice(8, 12);
+}
+
+function facilityCnpjCheck() {
+  const cnpj = document.getElementById("facilityCnpj").value;
+  const digits = cnpj.replace(/\D/g, "");
+  const hint = document.getElementById("facilityCnpjHint");
+  const typeSelect = document.getElementById("facilityType");
+  const editId = document.getElementById("facilityEditId").value;
+
+  if (digits.length < 14) {
+    hint.textContent = "";
+    return;
+  }
+
+  const base = cnpjExtractBase(cnpj);
+  const branch = cnpjExtractBranch(cnpj);
+  const isMatriz = branch === "0001";
+
+  typeSelect.value = isMatriz ? "Matriz" : "Filial";
+
+  if (isMatriz) {
+    const existing = facilitiesCache.find(f => cnpjExtractBase(f.cnpj) === base && f.type === "Matriz" && f.id !== editId);
+    if (existing) {
+      hint.textContent = `Matriz j\u00e1 cadastrada: ${existing.name}. Altere o sufixo para registrar filial.`;
+      hint.style.color = "#c0392b";
+    } else {
+      hint.textContent = "CNPJ de matriz (/0001). Ser\u00e1 cadastrada como Matriz.";
+      hint.style.color = "#1a8754";
+    }
+  } else {
+    const matriz = facilitiesCache.find(f => cnpjExtractBase(f.cnpj) === base && f.type === "Matriz");
+    if (matriz) {
+      hint.textContent = `Filial vinculada \u00e0 matriz: ${matriz.name} (${matriz.cnpj})`;
+      hint.style.color = "#1a8754";
+    } else {
+      hint.textContent = `Nenhuma matriz com raiz ${base} cadastrada. Cadastre a matriz primeiro (/0001).`;
+      hint.style.color = "#c0392b";
+    }
+  }
+}
+
+function facilityCancelForm() {
+  document.getElementById("facilityForm").classList.add("hidden");
+}
+
+function facilityEdit(id) {
+  const f = facilitiesCache.find(x => x.id === id);
+  if (!f) return;
+  document.getElementById("facilityEditId").value = f.id;
+  document.getElementById("facilityType").value = f.type;
+  document.getElementById("facilityName").value = f.name;
+  document.getElementById("facilityCnpj").value = f.cnpj;
+  document.getElementById("facilityAddress").value = f.address;
+  document.getElementById("facilityCity").value = f.city;
+  document.getElementById("facilityState").value = f.state;
+  document.getElementById("facilityZip").value = f.zipCode;
+  document.getElementById("facilityForm").classList.remove("hidden");
+  facilityCnpjCheck();
+  document.getElementById("facilityName").focus();
+}
+
+async function facilitySave() {
+  const editId = document.getElementById("facilityEditId").value;
+  const cnpjRaw = document.getElementById("facilityCnpj").value;
+  const digits = cnpjRaw.replace(/\D/g, "");
+
+  if (digits.length < 14) {
+    return alert("Informe um CNPJ v\u00e1lido com 14 d\u00edgitos.");
+  }
+
+  const base = cnpjExtractBase(cnpjRaw);
+  const branch = cnpjExtractBranch(cnpjRaw);
+  const isMatriz = branch === "0001";
+  const detectedType = isMatriz ? "Matriz" : "Filial";
+
+  if (isMatriz) {
+    const existing = facilitiesCache.find(f => cnpjExtractBase(f.cnpj) === base && f.type === "Matriz" && f.id !== editId);
+    if (existing) {
+      return alert(`J\u00e1 existe uma matriz com esta raiz de CNPJ: ${existing.name} (${existing.cnpj}). Use um sufixo diferente de /0001 para cadastrar filial.`);
+    }
+  } else {
+    const matriz = facilitiesCache.find(f => cnpjExtractBase(f.cnpj) === base && f.type === "Matriz");
+    if (!matriz) {
+      return alert(`Para cadastrar uma filial, primeiro cadastre a matriz com CNPJ raiz ${base}/0001-XX.`);
+    }
+  }
+
+  const payload = {
+    type: detectedType,
+    name: document.getElementById("facilityName").value,
+    cnpj: cnpjRaw,
+    address: document.getElementById("facilityAddress").value,
+    city: document.getElementById("facilityCity").value,
+    state: document.getElementById("facilityState").value,
+    zipCode: document.getElementById("facilityZip").value,
+    country: "Brasil",
+    latitude: null,
+    longitude: null,
+    isActive: true
+  };
+
+  if (!payload.name || !payload.city || !payload.state) {
+    return alert("Preencha ao menos Nome, Cidade e UF.");
+  }
+
+  const endpoint = editId
+    ? `/api/shipper/facilities/${editId}`
+    : "/api/shipper/facilities";
+  const method = editId ? "PUT" : "POST";
+
+  const res = await fetch(apiUrl(endpoint), {
+    method,
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert(await res.text());
+
+  facilityCancelForm();
+  await loadFacilities();
+}
+
+async function facilityDelete(id, name) {
+  if (!confirm(`Remover a unidade "${name}"?`)) return;
+  const res = await fetch(apiUrl(`/api/shipper/facilities/${id}`), {
+    method: "DELETE",
+    headers: authHeaders()
+  });
+  if (!res.ok) return alert(await res.text());
+  await loadFacilities();
+}
+
+/* ---------- BID TEMPLATE STUDIO (NDD-inspired grid) ---------- */
+
+const STUDIO_DEFAULT_ROWS = [
+  { key: "Origin", displayName: "Origem", aliases: "origem,origin,cidade origem", isRequired: true, dataType: "text" },
+  { key: "Destination", displayName: "Destino", aliases: "destino,destination,cidade destino", isRequired: true, dataType: "text" },
+  { key: "FreightType", displayName: "Tipo Frete", aliases: "tipo frete,freight type", isRequired: false, dataType: "text" },
+  { key: "VolumeForecast", displayName: "Volume", aliases: "volume,previsao volume,forecast", isRequired: false, dataType: "number" },
+  { key: "VehicleType", displayName: "Tipo Veículo", aliases: "tipo veiculo,vehicle type", isRequired: false, dataType: "text" },
+  { key: "SlaRequirements", displayName: "SLA", aliases: "sla,service level", isRequired: false, dataType: "text" },
+  { key: "Region", displayName: "Região", aliases: "regiao,region", isRequired: false, dataType: "text" }
+];
+
+let studioDragSrcRow = null;
+
+function studioRenderGrid(rows) {
+  const tbody = document.getElementById("studioGridBody");
+  tbody.innerHTML = "";
+  (rows || STUDIO_DEFAULT_ROWS).forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.draggable = true;
+    tr.dataset.idx = i;
+    tr.addEventListener("dragstart", studioOnDragStart);
+    tr.addEventListener("dragover", studioOnDragOver);
+    tr.addEventListener("drop", studioOnDrop);
+    tr.addEventListener("dragend", studioOnDragEnd);
+    tr.innerHTML = `
+      <td class="studio-td--center"><button class="studio-btn--move" title="Arrastar">&#x2630;</button><span class="studio-grid__order-num">${i + 1}</span></td>
+      <td><input type="text" value="${r.key || ""}" data-field="key" /></td>
+      <td><input type="text" value="${r.displayName || ""}" data-field="displayName" /></td>
+      <td><input type="text" value="${r.aliases || ""}" data-field="aliases" /></td>
+      <td class="studio-td--center"><input type="checkbox" data-field="isRequired" ${r.isRequired ? "checked" : ""} /></td>
+      <td><select data-field="dataType">
+        <option value="text" ${r.dataType === "text" ? "selected" : ""}>text</option>
+        <option value="number" ${r.dataType === "number" ? "selected" : ""}>number</option>
+        <option value="date" ${r.dataType === "date" ? "selected" : ""}>date</option>
+        <option value="currency" ${r.dataType === "currency" ? "selected" : ""}>currency</option>
+      </select></td>
+      <td class="studio-td--actions">
+        <button class="studio-btn--danger" title="Remover" onclick="studioRemoveRow(this)">&#x2716;</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function studioAddRow() {
+  const tbody = document.getElementById("studioGridBody");
+  const idx = tbody.rows.length;
+  const tr = document.createElement("tr");
+  tr.draggable = true;
+  tr.dataset.idx = idx;
+  tr.addEventListener("dragstart", studioOnDragStart);
+  tr.addEventListener("dragover", studioOnDragOver);
+  tr.addEventListener("drop", studioOnDrop);
+  tr.addEventListener("dragend", studioOnDragEnd);
+  tr.innerHTML = `
+    <td class="studio-td--center"><button class="studio-btn--move" title="Arrastar">&#x2630;</button><span class="studio-grid__order-num">${idx + 1}</span></td>
+    <td><input type="text" value="NewField" data-field="key" /></td>
+    <td><input type="text" value="Novo Campo" data-field="displayName" /></td>
+    <td><input type="text" value="" data-field="aliases" /></td>
+    <td class="studio-td--center"><input type="checkbox" data-field="isRequired" /></td>
+    <td><select data-field="dataType">
+      <option value="text" selected>text</option>
+      <option value="number">number</option>
+      <option value="date">date</option>
+      <option value="currency">currency</option>
+    </select></td>
+    <td class="studio-td--actions">
+      <button class="studio-btn--danger" title="Remover" onclick="studioRemoveRow(this)">&#x2716;</button>
+    </td>`;
+  tbody.appendChild(tr);
+  tr.querySelector('input[data-field="key"]').focus();
+  studioReindex();
+}
+
+function studioRemoveRow(btn) {
+  const tr = btn.closest("tr");
+  tr.remove();
+  studioReindex();
+}
+
+function studioReindex() {
+  const rows = document.querySelectorAll("#studioGridBody tr");
+  rows.forEach((tr, i) => {
+    tr.dataset.idx = i;
+    const numSpan = tr.querySelector(".studio-grid__order-num");
+    if (numSpan) numSpan.textContent = i + 1;
+  });
+}
+
+function studioCollectRows() {
+  const rows = [];
+  document.querySelectorAll("#studioGridBody tr").forEach((tr, i) => {
+    const get = (f) => {
+      const el = tr.querySelector(`[data-field="${f}"]`);
+      if (!el) return "";
+      if (el.type === "checkbox") return el.checked;
+      return el.value.trim();
+    };
+    const key = get("key");
+    if (!key) return;
+    rows.push({
+      key,
+      displayName: get("displayName"),
+      aliases: get("aliases"),
+      isRequired: get("isRequired"),
+      dataType: get("dataType") || "text",
+      sortOrder: i + 1
+    });
+  });
+  return rows;
+}
+
+function studioOnDragStart(e) {
+  studioDragSrcRow = this;
+  this.classList.add("studio-row--dragging");
+  e.dataTransfer.effectAllowed = "move";
+}
+
+function studioOnDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  this.classList.add("studio-row--over");
+}
+
+function studioOnDrop(e) {
+  e.preventDefault();
+  if (studioDragSrcRow === this) return;
+  const tbody = this.parentNode;
+  const allRows = [...tbody.children];
+  const fromIdx = allRows.indexOf(studioDragSrcRow);
+  const toIdx = allRows.indexOf(this);
+  if (fromIdx < toIdx) {
+    tbody.insertBefore(studioDragSrcRow, this.nextSibling);
+  } else {
+    tbody.insertBefore(studioDragSrcRow, this);
+  }
+  studioReindex();
+}
+
+function studioOnDragEnd() {
+  document.querySelectorAll("#studioGridBody tr").forEach(r => {
+    r.classList.remove("studio-row--dragging", "studio-row--over");
+  });
+  studioDragSrcRow = null;
+}
+
+async function createTemplate() {
+  const columns = studioCollectRows();
+  if (!columns.length) return alert("Adicione pelo menos uma coluna na grid.");
+
+  const payload = {
+    name: document.getElementById("templateName").value || "Template Custom",
+    isDefault: document.getElementById("templateIsDefault").checked,
+    columns
+  };
+
+  const res = await fetch(apiUrl("/api/shipper/templates"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert(await res.text());
+  alert("Template salvo.");
+  await loadTemplates();
+}
+
+async function loadTemplates() {
+  const res = await fetch(apiUrl("/api/shipper/templates"), { headers: authHeaders() });
+  if (!res.ok) return;
+  const templates = await res.json();
+  const select = document.getElementById("templateSelect");
+  select.innerHTML = templates
+    .map(t => `<option value="${t.id}">${t.name}${t.isDefault ? " (padrão)" : ""}</option>`)
+    .join("");
+
+  if (templates.length > 0) {
+    select.value = templates[0].id;
+    studioLoadFromTemplate(templates[0]);
+  } else {
+    studioRenderGrid(STUDIO_DEFAULT_ROWS);
+  }
+
+  select.onchange = () => {
+    const tmpl = templates.find(t => t.id === select.value);
+    if (tmpl) studioLoadFromTemplate(tmpl);
+  };
+
+  mapperPopulateTemplateSelect();
+}
+
+function studioLoadFromTemplate(tmpl) {
+  document.getElementById("templateName").value = tmpl.name || "";
+  document.getElementById("templateIsDefault").checked = tmpl.isDefault || false;
+  if (tmpl.columns && tmpl.columns.length) {
+    const sorted = [...tmpl.columns].sort((a, b) => a.sortOrder - b.sortOrder);
+    studioRenderGrid(sorted);
+  } else {
+    studioRenderGrid(STUDIO_DEFAULT_ROWS);
+  }
+}
+
+async function downloadTemplateExcel() {
+  const templateId = document.getElementById("templateSelect").value;
+  if (!templateId) return alert("Selecione um template.");
+  const res = await fetch(apiUrl(`/api/shipper/templates/${templateId}/export-excel`), { headers: authHeaders() });
+  if (!res.ok) return alert("Falha ao exportar template.");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "bid-template.xlsx";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function mapExcelTemplate() {
+  const templateId = document.getElementById("templateSelect").value;
+  const file = document.getElementById("templateMapFile").files[0];
+  if (!templateId) return alert("Selecione um template.");
+  if (!file) return alert("Selecione uma planilha.");
+
+  const form = new FormData();
+  form.append("excelFile", file);
+
+  const res = await fetch(apiUrl(`/api/shipper/templates/${templateId}/map-excel`), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+
+  const rows = data.matches
+    .map(m => {
+      const pct = (m.confidence * 100);
+      const cls = pct >= 80 ? "confidence-high" : pct >= 50 ? "confidence-mid" : "confidence-low";
+      return `<tr>
+        <td>${m.displayName}</td>
+        <td>${m.matchedHeader || "<em>-</em>"}</td>
+        <td class="${cls}">${number(pct)}%</td>
+        <td>${m.isRequired ? "<strong>Sim</strong>" : "Não"}</td>
+      </tr>`;
+    }).join("");
+  const missing = (data.missingRequired || []).join(", ");
+  document.getElementById("templateMappingResult").innerHTML = `
+    <table class="table">
+      <thead><tr><th>Campo Template</th><th>Coluna Encontrada</th><th>Confiança</th><th>Obrigatório</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${missing ? `<div style="margin-top:8px;color:#c0392b"><strong>Obrigatórios não mapeados:</strong> ${missing}</div>` : '<div style="margin-top:8px;color:#1a8754"><strong>Todos os campos obrigatórios mapeados.</strong></div>'}
+  `;
+}
+
+async function createBidFromExcel() {
+  const file = document.getElementById("excelFile").files[0];
+  if (!file) return alert("Select an Excel file first.");
+  const deadlineValue = document.getElementById("deadline").value;
+
+  const form = new FormData();
+  form.append("excelFile", file);
+  form.append("title", document.getElementById("bidTitle").value);
+  form.append("auctionType", document.getElementById("auctionType").value);
+  if (deadlineValue) {
+    form.append("deadlineUtc", new Date(deadlineValue).toISOString());
+  }
+  form.append("requiredDocumentation", document.getElementById("requiredDocs").value);
+  const baselineValue = document.getElementById("baselineValue").value;
+  if (baselineValue) {
+    form.append("baselineContractValue", baselineValue);
+  }
+  const mappingProfileId = document.getElementById("mappingProfileSelect").value;
+  if (mappingProfileId) {
+    form.append("mappingProfileId", mappingProfileId);
+  }
+
+  const res = await fetch(apiUrl("/api/shipper/bids/from-excel"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) {
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const err = await res.json();
+      const details = err?.error || err?.title || JSON.stringify(err);
+      return alert(`Import failed: ${details}`);
+    }
+    return alert(await res.text());
+  }
+  alert("BID created from Excel.");
+  await loadBids();
+}
+
+async function loadShipperMappingProfiles() {
+  const res = await fetch(apiUrl("/api/shipper/mapping-profiles"), { headers: authHeaders() });
+  if (!res.ok) return;
+  const profiles = await res.json();
+  const select = document.getElementById("mappingProfileSelect");
+  select.innerHTML = `<option value="">Auto mapping padrão</option>` + profiles
+    .filter(p => p.isActive)
+    .map(p => `<option value="${p.id}">${p.name}</option>`)
+    .join("");
+}
+
+async function loadAdminShippers() {
+  const res = await fetch(apiUrl("/api/admin/shippers"), { headers: authHeaders() });
+  if (!res.ok) return;
+  const shippers = await res.json();
+  document.getElementById("adminShipperSelect").innerHTML = shippers
+    .map(s => `<option value="${s.id}">${s.company} (${s.email})</option>`)
+    .join("");
+}
+
+async function loadAdminProfiles() {
+  const shipperId = document.getElementById("adminShipperSelect").value;
+  if (!shipperId) return;
+  const res = await fetch(apiUrl(`/api/admin/mapping-profiles?shipperId=${shipperId}`), { headers: authHeaders() });
+  if (!res.ok) return;
+  adminProfiles = await res.json();
+  document.getElementById("adminProfileSelect").innerHTML = adminProfiles
+    .map(p => `<option value="${p.id}">${p.name}${p.isActive ? " (ativo)" : ""}</option>`)
+    .join("");
+  renderAdminGrid();
+}
+
+function renderAdminGrid() {
+  const profileId = document.getElementById("adminProfileSelect").value;
+  const profile = adminProfiles.find(p => p.id === profileId) || adminProfiles[0];
+  const rows = (profile?.rules || []).sort((a, b) => a.sortOrder - b.sortOrder);
+  document.getElementById("adminGridBody").innerHTML = rows
+    .map(r => `
+      <tr>
+        <td contenteditable="true">${r.canonicalField || ""}</td>
+        <td contenteditable="true">${r.displayName || ""}</td>
+        <td contenteditable="true">${r.aliases || ""}</td>
+        <td contenteditable="true">${r.isRequired ? "true" : "false"}</td>
+        <td contenteditable="true">${r.dataType || "text"}</td>
+        <td contenteditable="true">${r.sortOrder ?? 0}</td>
+      </tr>
+    `).join("");
+}
+
+function addAdminGridRow() {
+  const tbody = document.getElementById("adminGridBody");
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td contenteditable="true">CustomField</td>
+    <td contenteditable="true">Campo Custom</td>
+    <td contenteditable="true">campo custom,custom field</td>
+    <td contenteditable="true">false</td>
+    <td contenteditable="true">text</td>
+    <td contenteditable="true">99</td>`;
+  tbody.appendChild(tr);
+}
+
+function newAdminProfile() {
+  document.getElementById("adminProfileSelect").value = "";
+  document.getElementById("adminGridBody").innerHTML = "";
+  addAdminGridRow();
+}
+
+function collectAdminGridRules() {
+  const rows = [...document.querySelectorAll("#adminGridBody tr")];
+  return rows.map(row => {
+    const cells = [...row.querySelectorAll("td")].map(td => td.textContent.trim());
+    return {
+      canonicalField: cells[0] || "",
+      displayName: cells[1] || "",
+      aliases: cells[2] || "",
+      isRequired: (cells[3] || "").toLowerCase() === "true",
+      dataType: cells[4] || "text",
+      sortOrder: Number(cells[5] || 0)
+    };
+  }).filter(r => r.canonicalField);
+}
+
+async function saveAdminProfile() {
+  const shipperId = document.getElementById("adminShipperSelect").value;
+  if (!shipperId) return alert("Selecione o embarcador.");
+  const profileId = document.getElementById("adminProfileSelect").value;
+  const rules = collectAdminGridRules();
+  if (!rules.length) return alert("Adicione regras na grid.");
+
+  const name = profileId
+    ? (adminProfiles.find(p => p.id === profileId)?.name || "Perfil Custom")
+    : prompt("Nome do novo perfil de mapeamento:", "Perfil Cliente");
+  if (!name) return;
+
+  const payload = { shipperId, name, isActive: true, rules };
+  const endpoint = profileId ? `/api/admin/mapping-profiles/${profileId}` : "/api/admin/mapping-profiles";
+  const method = profileId ? "PUT" : "POST";
+  const res = await fetch(apiUrl(endpoint), {
+    method,
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert(await res.text());
+  alert("Perfil salvo.");
+  await loadAdminProfiles();
+}
+
+async function analyzeAdminProfile() {
+  const profileId = document.getElementById("adminProfileSelect").value;
+  const file = document.getElementById("adminAnalyzeFile").files[0];
+  if (!profileId) return alert("Selecione um perfil.");
+  if (!file) return alert("Selecione uma planilha.");
+
+  const form = new FormData();
+  form.append("excelFile", file);
+  const res = await fetch(apiUrl(`/api/admin/mapping-profiles/${profileId}/analyze-excel`), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+  const rows = data.matches
+    .map(m => `<tr><td>${m.displayName}</td><td>${m.matchedHeader || "-"}</td><td>${number(m.confidence * 100)}%</td><td>${m.isRequired ? "Sim" : "Não"}</td></tr>`)
+    .join("");
+  document.getElementById("adminAnalyzeResult").innerHTML = `
+    <table class="table">
+      <tr><th>Campo</th><th>Header Encontrado</th><th>Confiança</th><th>Obrigatório</th></tr>
+      ${rows}
+    </table>`;
+}
+
+async function loadBids() {
+  const res = await fetch(apiUrl("/api/shipper/bids"), { headers: authHeaders() });
+  const bids = await res.json();
+  const tableRows = bids.map(b => `<tr><td>${b.title}</td><td>${b.auctionType}</td><td>${new Date(b.deadlineUtc).toLocaleString()}</td><td>${b.lanes}</td><td>${b.invitedCarriers}</td></tr>`).join("");
+  document.getElementById("bidList").innerHTML = `<table class="table"><tr><th>Title</th><th>Auction</th><th>Deadline</th><th>Lanes</th><th>Invited</th></tr>${tableRows}</table>`;
+
+  const options = bids.map(b => `<option value="${b.id}" data-deadline="${b.deadlineUtc}">${b.title}</option>`).join("");
+  document.getElementById("bidToInvite").innerHTML = options;
+  document.getElementById("dashboardBid").innerHTML = options;
+}
+
+async function loadCarriers() {
+  const res = await fetch(apiUrl("/api/system/carriers"), { headers: authHeaders() });
+  const carriers = await res.json();
+  document.getElementById("carrierChecklist").innerHTML = carriers
+    .map(c => `<label><input type="checkbox" class="carrier-check" value="${c.id}"/> ${c.company} (${c.email})</label><br/>`)
+    .join("");
+}
+
+async function inviteCarriers() {
+  const bidId = document.getElementById("bidToInvite").value;
+  const carrierIds = [...document.querySelectorAll(".carrier-check:checked")].map(i => i.value);
+  const res = await fetch(apiUrl(`/api/shipper/bids/${bidId}/invite`), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ carrierIds })
+  });
+  if (!res.ok) return alert(await res.text());
+  alert("Invitations sent.");
+  await loadBids();
+}
+
+async function loadDashboard() {
+  const bidId = document.getElementById("dashboardBid").value;
+  if (!bidId) return;
+  const region = document.getElementById("filterRegion").value;
+
+  const bidOption = document.querySelector(`#dashboardBid option[value="${bidId}"]`);
+  selectedBidDeadline = bidOption?.dataset.deadline ? new Date(bidOption.dataset.deadline) : null;
+
+  const query = region ? `?region=${encodeURIComponent(region)}` : "";
+  const res = await fetch(apiUrl(`/api/shipper/bids/${bidId}/dashboard${query}`), { headers: authHeaders() });
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+
+  document.getElementById("kpiSavings").textContent = money(data.kpis.totalProjectedSavings);
+  document.getElementById("kpiCost").textContent = money(data.kpis.costVsPreviousContract);
+  document.getElementById("kpiPerf").textContent = number(data.kpis.carrierPerformanceIndex);
+
+  renderCharts(data);
+}
+
+function renderCharts(data) {
+  const labels = data.ranking.map(r => r.carrierName);
+  const prices = data.ranking.map(r => r.totalPrice);
+  const scores = data.ranking.map(r => r.score);
+  const deviations = data.ranking.map(r => r.priceDeviation);
+
+  if (priceChart) priceChart.destroy();
+  if (deviationChart) deviationChart.destroy();
+  if (heatmapChart) heatmapChart.destroy();
+
+  priceChart = new Chart(document.getElementById("priceChart"), {
+    type: "bar",
+    data: { labels, datasets: [{ label: "Total Price", data: prices }, { label: "Score", data: scores }] }
+  });
+
+  deviationChart = new Chart(document.getElementById("deviationChart"), {
+    type: "line",
+    data: { labels, datasets: [{ label: "Price Deviation %", data: deviations }] }
+  });
+
+  heatmapChart = new Chart(document.getElementById("heatmapChart"), {
+    type: "bar",
+    data: {
+      labels: data.heatmap.map(h => h.region),
+      datasets: [{ label: "Average Volume", data: data.heatmap.map(h => h.avgVolume) }]
+    }
+  });
+}
+
+async function exportDashboard(format) {
+  const bidId = document.getElementById("dashboardBid").value;
+  if (!bidId) return;
+  const res = await fetch(apiUrl(`/api/shipper/bids/${bidId}/export/${format}`), { headers: authHeaders() });
+  if (!res.ok) return alert("Export failed.");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `dashboard.${format === "excel" ? "xlsx" : "pdf"}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function loadAudit() {
+  const res = await fetch(apiUrl("/api/system/audit-log"), { headers: authHeaders() });
+  if (!res.ok) return;
+  const logs = await res.json();
+  document.getElementById("auditLog").innerHTML = logs.map(x => `<div><span class="badge">${x.action}</span> ${x.entityType} ${x.entityId} - ${x.details}</div>`).join("");
+}
+
+async function loadInvitedBids() {
+  const res = await fetch(apiUrl("/api/carrier/invited-bids"), { headers: authHeaders() });
+  const bids = await res.json();
+  document.getElementById("invitedBids").innerHTML = bids.map(b => `<div><strong>${b.title}</strong> | Deadline: ${new Date(b.deadlineUtc).toLocaleString()} | Lanes: ${b.laneCount}</div>`).join("");
+  document.getElementById("carrierBidSelect").innerHTML = bids.map(b => `<option value="${b.bidEventId}">${b.title}</option>`).join("");
+  await loadLanePricingForm();
+}
+
+async function loadLanePricingForm() {
+  const bidId = document.getElementById("carrierBidSelect").value;
+  if (!bidId) return;
+  const res = await fetch(apiUrl(`/api/carrier/bids/${bidId}`), { headers: authHeaders() });
+  const lanes = await res.json();
+  document.getElementById("lanePricing").innerHTML = lanes.map(l => `
+    <div class="grid3">
+      <span>${l.origin} -> ${l.destination} (${l.region || "N/A"})</span>
+      <span>${l.vehicleType} | Vol ${l.volumeForecast}</span>
+      <input type="number" step="0.01" class="lane-price" data-lane="${l.id}" placeholder="Price per lane" />
+    </div>
+  `).join("");
+  await loadProposalVersions();
+}
+
+async function saveProposalDraft() {
+  await saveProposal("draft");
+}
+
+async function submitProposal() {
+  await saveProposal("submit");
+}
+
+async function saveProposal(mode) {
+  const bidId = document.getElementById("carrierBidSelect").value;
+  const lanePrices = [...document.querySelectorAll(".lane-price")]
+    .filter(x => x.value)
+    .map(x => ({ laneId: x.dataset.lane, pricePerLane: Number(x.value) }));
+
+  const payload = {
+    bidId,
+    lanePrices,
+    operationalCapacityTons: Number(document.getElementById("capacity").value || 0),
+    slaCompliant: document.getElementById("slaCompliant").checked
+  };
+
+  const endpoint = mode === "draft" ? "/api/carrier/proposals/save-draft" : "/api/carrier/proposals/submit";
+  const res = await fetch(apiUrl(endpoint), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+  alert(`Proposal ${data.status} (v${data.version}) total ${money(data.totalPrice)}`);
+  await loadProposalVersions();
+}
+
+async function loadProposalVersions() {
+  const bidId = document.getElementById("carrierBidSelect").value;
+  if (!bidId) return;
+  const res = await fetch(apiUrl(`/api/carrier/bids/${bidId}/proposal-versions`), { headers: authHeaders() });
+  if (!res.ok) return;
+  const versions = await res.json();
+  document.getElementById("proposalVersions").innerHTML = versions.map(v => `<div><span class="badge">v${v.version}</span> ${v.status} | ${money(v.totalPrice)} | SLA ${v.slaCompliant ? "OK" : "No"} | ${new Date(v.savedAtUtc).toLocaleString()}</div>`).join("");
+}
+
+async function loadNotifications() {
+  const res = await fetch(apiUrl("/api/system/notifications"), { headers: authHeaders() });
+  if (!res.ok) return;
+  const notes = await res.json();
+  document.getElementById("notifications").innerHTML = notes.map(n => `<div><strong>${n.title}</strong> - ${n.message}</div>`).join("");
+}
+
+function money(value) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value || 0);
+}
+
+function number(value) {
+  return Number(value || 0).toFixed(2);
+}
+
+function initDragDrop() {
+  const zone = document.getElementById("dropZone");
+  const input = document.getElementById("excelFile");
+
+  zone.addEventListener("dragover", e => {
+    e.preventDefault();
+    zone.classList.add("drag");
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("drag"));
+  zone.addEventListener("drop", e => {
+    e.preventDefault();
+    zone.classList.remove("drag");
+    input.files = e.dataTransfer.files;
+  });
+  document.getElementById("carrierBidSelect").addEventListener("change", loadLanePricingForm);
+  const adminShipper = document.getElementById("adminShipperSelect");
+  const adminProfile = document.getElementById("adminProfileSelect");
+  if (adminShipper) adminShipper.addEventListener("change", loadAdminProfiles);
+  if (adminProfile) adminProfile.addEventListener("change", renderAdminGrid);
+}
+
+/* ---------- LOG VIEWER ---------- */
+
+const LOG_LEVEL_COLORS = {
+  Info:  { bg: "#e6f9e6", fg: "#1a7a1a", badge: "#28a745" },
+  Warn:  { bg: "#fff9e0", fg: "#8a6d00", badge: "#ffc107" },
+  Error: { bg: "#fde8e8", fg: "#b71c1c", badge: "#dc3545" },
+  Debug: { bg: "#e3ecfa", fg: "#1a4a8a", badge: "#007bff" }
+};
+
+async function loadLogServices() {
+  const res = await fetch(apiUrl("/api/log/services"), { headers: authHeaders() });
+  if (!res.ok) return;
+  const services = await res.json();
+  const sel = document.getElementById("logFilterService");
+  sel.innerHTML = `<option value="">Todos</option>` + services.map(s => `<option value="${s}">${s}</option>`).join("");
+}
+
+async function searchLogs(page) {
+  logCurrentPage = page || 1;
+  const from = document.getElementById("logFilterFrom").value;
+  const to = document.getElementById("logFilterTo").value;
+  const level = document.getElementById("logFilterLevel").value;
+  const service = document.getElementById("logFilterService").value;
+  const text = document.getElementById("logFilterText").value;
+  const correlationId = document.getElementById("logFilterCorrelation").value;
+  const userEmail = document.getElementById("logFilterUser").value;
+
+  const params = new URLSearchParams();
+  if (from) params.set("from", new Date(from).toISOString());
+  if (to) params.set("to", new Date(to).toISOString());
+  if (level) params.set("level", level);
+  if (service) params.set("service", service);
+  if (text) params.set("text", text);
+  if (correlationId) params.set("correlationId", correlationId);
+  if (userEmail) params.set("userEmail", userEmail);
+  params.set("page", logCurrentPage);
+  params.set("pageSize", 50);
+
+  const res = await fetch(apiUrl(`/api/log?${params.toString()}`), { headers: authHeaders() });
+  if (!res.ok) return alert("Falha ao buscar logs.");
+  const data = await res.json();
+
+  renderLogTable(data);
+  renderLogStats();
+}
+
+function renderLogTable(data) {
+  const rows = data.items.map(l => {
+    const c = LOG_LEVEL_COLORS[l.level] || LOG_LEVEL_COLORS.Info;
+    const ts = new Date(l.timestamp);
+    const time = ts.toLocaleTimeString("pt-BR", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const date = ts.toLocaleDateString("pt-BR");
+    const shortMsg = l.message.length > 90 ? l.message.slice(0, 90) + "..." : l.message;
+    return `
+      <tr class="log-row" style="background:${c.bg}; cursor:pointer;" onclick="toggleLogDetail(this)">
+        <td style="white-space:nowrap">${date} ${time}</td>
+        <td><span class="log-badge" style="background:${c.badge};color:#fff">${l.level}</span></td>
+        <td>${l.service}</td>
+        <td class="log-corr" title="${l.correlationId}">${l.correlationId || "-"}</td>
+        <td title="${l.message}">${shortMsg}</td>
+        <td>${l.httpMethod || ""} ${l.httpStatus || ""}</td>
+        <td>${l.elapsedMs != null ? l.elapsedMs + "ms" : ""}</td>
+        <td>${l.userEmail || "-"}</td>
+      </tr>
+      <tr class="log-detail hidden">
+        <td colspan="8">
+          <div class="log-detail-box">
+            <strong>Correlation ID:</strong> ${l.correlationId}<br/>
+            <strong>Request:</strong> ${l.httpMethod || ""} ${l.requestPath || ""}<br/>
+            <strong>IP:</strong> ${l.ipAddress || "-"}<br/>
+            <strong>User:</strong> ${l.userEmail || "-"} (${l.userId || "-"})<br/>
+            <strong>Full Message:</strong> ${l.message}<br/>
+            ${l.stackTrace ? `<strong>Stack Trace:</strong><pre class="log-stack">${l.stackTrace}</pre>` : ""}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  const pagination = renderLogPagination(data);
+
+  document.getElementById("logTableContainer").innerHTML = `
+    <div class="log-summary">
+      Exibindo <strong>${data.items.length}</strong> de <strong>${data.totalCount}</strong> registros | Página ${data.page} de ${data.totalPages}
+    </div>
+    <table class="table log-table">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Level</th>
+          <th>Serviço</th>
+          <th>CorrelationId</th>
+          <th>Mensagem</th>
+          <th>HTTP</th>
+          <th>Tempo</th>
+          <th>Usuário</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${pagination}
+  `;
+}
+
+function renderLogPagination(data) {
+  if (data.totalPages <= 1) return "";
+  let btns = "";
+  const start = Math.max(1, data.page - 3);
+  const end = Math.min(data.totalPages, data.page + 3);
+  if (data.page > 1) btns += `<button class="log-page-btn" onclick="searchLogs(${data.page - 1})">&laquo;</button>`;
+  for (let p = start; p <= end; p++) {
+    btns += `<button class="log-page-btn${p === data.page ? " active" : ""}" onclick="searchLogs(${p})">${p}</button>`;
+  }
+  if (data.page < data.totalPages) btns += `<button class="log-page-btn" onclick="searchLogs(${data.page + 1})">&raquo;</button>`;
+  return `<div class="log-pagination">${btns}</div>`;
+}
+
+function toggleLogDetail(row) {
+  const detail = row.nextElementSibling;
+  if (detail) detail.classList.toggle("hidden");
+}
+
+async function renderLogStats() {
+  const from = document.getElementById("logFilterFrom").value;
+  const to = document.getElementById("logFilterTo").value;
+  const params = new URLSearchParams();
+  if (from) params.set("from", new Date(from).toISOString());
+  if (to) params.set("to", new Date(to).toISOString());
+
+  const res = await fetch(apiUrl(`/api/log/stats?${params.toString()}`), { headers: authHeaders() });
+  if (!res.ok) return;
+  const stats = await res.json();
+
+  const container = document.getElementById("logStatsCards");
+  container.innerHTML = ["Info", "Warn", "Error", "Debug"].map(level => {
+    const c = LOG_LEVEL_COLORS[level];
+    const count = (stats.find(s => s.level === level) || {}).count || 0;
+    return `<div class="log-stat-card" style="border-left: 4px solid ${c.badge}; background:${c.bg}">
+      <span class="log-stat-level" style="color:${c.fg}">${level}</span>
+      <span class="log-stat-count" style="color:${c.fg}">${count}</span>
+    </div>`;
+  }).join("");
+}
+
+function clearLogFilters() {
+  document.getElementById("logFilterFrom").value = "";
+  document.getElementById("logFilterTo").value = "";
+  document.getElementById("logFilterLevel").value = "";
+  document.getElementById("logFilterService").value = "";
+  document.getElementById("logFilterText").value = "";
+  document.getElementById("logFilterCorrelation").value = "";
+  document.getElementById("logFilterUser").value = "";
+  searchLogs(1);
+}
+
+/* ---------- EXCEL MAPPER WIZARD (low-code) ---------- */
+
+let mapperState = {
+  file: null,
+  templateId: null,
+  templateFields: [],
+  sourceHeaders: [],
+  suggestedMappings: [],
+  headerRow: 1,
+  totalRows: 0,
+  sheetName: "",
+  rawPreview: null
+};
+
+function mapperGoStep(step) {
+  [1, 2, 3].forEach(s => {
+    const panel = document.getElementById(`mapperStep${s}`);
+    const stepEl = document.querySelector(`.mapper-step[data-step="${s}"]`);
+    if (s === step) {
+      panel.classList.remove("hidden");
+      stepEl.classList.add("mapper-step--active");
+      stepEl.classList.remove("mapper-step--done");
+    } else if (s < step) {
+      panel.classList.add("hidden");
+      stepEl.classList.remove("mapper-step--active");
+      stepEl.classList.add("mapper-step--done");
+    } else {
+      panel.classList.add("hidden");
+      stepEl.classList.remove("mapper-step--active", "mapper-step--done");
+    }
+  });
+}
+
+function mapperPopulateTemplateSelect() {
+  const main = document.getElementById("templateSelect");
+  const mapper = document.getElementById("mapperTemplateSelect");
+  if (!main || !mapper) return;
+  mapper.innerHTML = main.innerHTML;
+  mapper.value = main.value;
+}
+
+async function mapperUploadAndPreview() {
+  const fileInput = document.getElementById("mapperFile");
+  if (!fileInput.files[0]) return;
+  mapperState.file = fileInput.files[0];
+
+  const form = new FormData();
+  form.append("excelFile", mapperState.file);
+  form.append("maxRows", "30");
+
+  const res = await fetch(apiUrl("/api/shipper/excel/preview-raw"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) return alert(await res.text());
+
+  mapperState.rawPreview = await res.json();
+  mapperState.headerRow = mapperState.rawPreview.detectedHeaderRow;
+  mapperState.sheetName = mapperState.rawPreview.sheetName;
+  mapperState.totalRows = mapperState.rawPreview.totalRows;
+
+  document.getElementById("mapperDetectedRow").textContent = mapperState.headerRow;
+  document.getElementById("mapperRawSheetInfo").innerHTML =
+    `Planilha: <strong>${mapperState.rawPreview.sheetName}</strong> | ${mapperState.rawPreview.totalRows} linhas | ${mapperState.rawPreview.totalColumns} colunas`;
+
+  mapperRenderRawGrid();
+  document.getElementById("mapperRawContainer").classList.remove("hidden");
+}
+
+function mapperRenderRawGrid() {
+  const raw = mapperState.rawPreview;
+  if (!raw) return;
+
+  const thead = document.getElementById("mapperRawHead");
+  let headerHtml = `<tr><th></th>`;
+  raw.columnLetters.forEach(letter => {
+    headerHtml += `<th>${letter}</th>`;
+  });
+  headerHtml += `</tr>`;
+  thead.innerHTML = headerHtml;
+
+  const tbody = document.getElementById("mapperRawBody");
+  tbody.innerHTML = "";
+
+  raw.rows.forEach(row => {
+    const tr = document.createElement("tr");
+    const isHeader = row.rowNumber === mapperState.headerRow;
+    const isAbove = row.rowNumber < mapperState.headerRow;
+    if (isHeader) tr.classList.add("ep-header-row");
+    if (isAbove) tr.classList.add("ep-above-header");
+
+    tr.addEventListener("click", () => mapperSelectHeaderRow(row.rowNumber));
+
+    let cellsHtml = `<td class="ep-row-num">${row.rowNumber}</td>`;
+    row.cells.forEach(cell => {
+      cellsHtml += `<td title="${cell.columnLetter}${row.rowNumber}: ${cell.value}">${cell.value}</td>`;
+    });
+    tr.innerHTML = cellsHtml;
+    tbody.appendChild(tr);
+  });
+
+  mapperUpdateSelectedInfo();
+}
+
+function mapperSelectHeaderRow(rowNum) {
+  mapperState.headerRow = rowNum;
+
+  const tbody = document.getElementById("mapperRawBody");
+  [...tbody.children].forEach(tr => {
+    const rn = parseInt(tr.querySelector(".ep-row-num")?.textContent);
+    tr.classList.remove("ep-header-row", "ep-above-header");
+    if (rn === rowNum) tr.classList.add("ep-header-row");
+    else if (rn < rowNum) tr.classList.add("ep-above-header");
+  });
+
+  mapperUpdateSelectedInfo();
+}
+
+function mapperUpdateSelectedInfo() {
+  const raw = mapperState.rawPreview;
+  const headerRowData = raw.rows.find(r => r.rowNumber === mapperState.headerRow);
+  const colNames = headerRowData
+    ? headerRowData.cells.filter(c => c.value).map(c => `${c.columnLetter}: ${c.value}`).join(", ")
+    : "";
+
+  document.getElementById("mapperSelectedRowInfo").innerHTML =
+    `Cabeçalho selecionado: <strong>Linha ${mapperState.headerRow}</strong>`;
+
+  const infoSpan = document.getElementById("mapperDetectedRow");
+  if (infoSpan) infoSpan.textContent = mapperState.headerRow;
+}
+
+async function mapperConfirmHeaderAndAutoMap() {
+  const templateId = document.getElementById("mapperTemplateSelect").value;
+  if (!templateId) return alert("Selecione um template de destino.");
+  if (!mapperState.file) return alert("Faça upload de uma planilha primeiro.");
+
+  mapperState.templateId = templateId;
+
+  const raw = mapperState.rawPreview;
+  const headerRowData = raw.rows.find(r => r.rowNumber === mapperState.headerRow);
+  if (!headerRowData) return alert("Linha de cabeçalho inválida.");
+
+  mapperState.sourceHeaders = headerRowData.cells
+    .filter(c => c.value)
+    .map(c => ({ columnIndex: c.columnIndex, name: c.value, letter: c.columnLetter }));
+
+  const form = new FormData();
+  form.append("excelFile", mapperState.file);
+
+  const res = await fetch(apiUrl(`/api/shipper/templates/${templateId}/auto-map`), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+
+  mapperState.templateFields = data.templateFields;
+  mapperState.suggestedMappings = data.suggestedMappings;
+
+  document.getElementById("mapperSheetInfo").innerHTML =
+    `Planilha: <strong>${mapperState.sheetName}</strong> | ${mapperState.totalRows} linhas | ${mapperState.sourceHeaders.length} colunas`;
+  document.getElementById("mapperHeaderInfo").innerHTML =
+    `Cabeçalho: <strong>Linha ${mapperState.headerRow}</strong>`;
+
+  mapperRenderMappingGrid();
+  mapperGoStep(2);
+}
+
+function mapperRenderMappingGrid() {
+  const tbody = document.getElementById("mapperMappingBody");
+  tbody.innerHTML = "";
+
+  mapperState.templateFields.forEach(field => {
+    const suggestion = mapperState.suggestedMappings.find(m => m.canonicalField === field.key);
+    const matchedColIdx = suggestion && suggestion.columnIndex > 0 ? suggestion.columnIndex : -1;
+    const confidence = suggestion ? suggestion.confidence : 0;
+
+    const options = [`<option value="-1">— não mapear —</option>`]
+      .concat(mapperState.sourceHeaders.map(h =>
+        `<option value="${h.columnIndex}" ${h.columnIndex === matchedColIdx ? "selected" : ""}>[${h.letter}] ${h.name}</option>`
+      ));
+
+    const confPct = Math.round(confidence * 100);
+    const confClass = confPct >= 80 ? "mapper-confidence--high" :
+                      confPct >= 50 ? "mapper-confidence--mid" :
+                      confPct > 0 ? "mapper-confidence--low" : "mapper-confidence--none";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${field.displayName}</strong> <span style="color:#8a9ab8;font-size:11px">(${field.key})</span></td>
+      <td class="studio-td--center">${field.isRequired ? '<span style="color:#c0392b;font-weight:700">Sim</span>' : 'Não'}</td>
+      <td><select class="mapper-col-select" data-field-key="${field.key}" style="width:100%;padding:6px 8px;border-radius:4px;border:1px solid #d6e0f0;font-size:13px">${options.join("")}</select></td>
+      <td class="studio-td--center"><span class="mapper-confidence ${confClass}">${confPct > 0 ? confPct + "%" : "—"}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function mapperCollectMappings() {
+  const selects = document.querySelectorAll(".mapper-col-select");
+  const mappings = [];
+  selects.forEach(sel => {
+    const colIdx = parseInt(sel.value);
+    if (colIdx > 0) {
+      mappings.push({
+        sourceColumnIndex: colIdx,
+        targetFieldKey: sel.dataset.fieldKey
+      });
+    }
+  });
+  return mappings;
+}
+
+async function mapperPreview() {
+  const mappings = mapperCollectMappings();
+  if (!mappings.length) return alert("Mapeie pelo menos uma coluna.");
+
+  const form = new FormData();
+  form.append("excelFile", mapperState.file);
+  form.append("mappingsJson", JSON.stringify(mappings));
+  form.append("headerRow", mapperState.headerRow);
+
+  const res = await fetch(apiUrl(`/api/shipper/templates/${mapperState.templateId}/transform-preview`), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+
+  document.getElementById("mapperPreviewInfo").innerHTML =
+    `<span class="mapper-preview-count">${data.totalRows} linhas transformadas (preview: até 50)</span>`;
+
+  const thead = document.getElementById("mapperPreviewHead");
+  thead.innerHTML = `<tr>${data.columns.map(c => `<th class="studio-grid__th">${c}</th>`).join("")}</tr>`;
+
+  const tbody = document.getElementById("mapperPreviewBody");
+  tbody.innerHTML = data.rows.map(row =>
+    `<tr>${data.columns.map(c => `<td style="padding:6px 10px;font-size:13px">${row[c] || ""}</td>`).join("")}</tr>`
+  ).join("");
+
+  mapperGoStep(3);
+}
+
+async function mapperExportAll() {
+  const mappings = mapperCollectMappings();
+  if (!mappings.length) return alert("Sem mapeamento definido.");
+
+  const form = new FormData();
+  form.append("excelFile", mapperState.file);
+  form.append("mappingsJson", JSON.stringify(mappings));
+  form.append("headerRow", mapperState.headerRow);
+
+  const res = await fetch(apiUrl(`/api/shipper/templates/${mapperState.templateId}/export-transformed`), {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  if (!res.ok) return alert(await res.text());
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "dados_transformados.xlsx";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ---------- INIT ---------- */
+
+setDefaultDeadline();
+initDragDrop();
+studioRenderGrid(STUDIO_DEFAULT_ROWS);
+setInterval(() => {
+  if (!selectedBidDeadline) return;
+  const diff = selectedBidDeadline - new Date();
+  if (diff <= 0) return (document.getElementById("countdown").textContent = "Closed");
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  document.getElementById("countdown").textContent = `${h}h ${m}m`;
+}, 1000);
