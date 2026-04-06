@@ -18,15 +18,9 @@ public class ShipperController(
     INotificationService notificationService,
     IAuditService auditService,
     IScoringService scoringService,
-    IExportService exportService) : ControllerBase
+    IExportService exportService,
+    IRouteEngineService routeEngineService) : ControllerBase
 {
-    [HttpPost("excel/analyze")]
-    public ActionResult<ExcelAnalysisResult> AnalyzeExcel([FromForm] IFormFile excelFile)
-    {
-        var result = excelImportService.AnalyzeColumns(excelFile);
-        return Ok(result);
-    }
-
     [HttpGet("templates")]
     public async Task<ActionResult<object>> GetTemplates(CancellationToken ct)
     {
@@ -75,6 +69,13 @@ public class ShipperController(
         if (!request.Columns.Any())
         {
             return BadRequest("Template must have at least one column.");
+        }
+
+        var nameExists = await db.BidTemplates
+            .AnyAsync(x => x.ShipperId == shipperId && x.Name == request.Name.Trim(), ct);
+        if (nameExists)
+        {
+            return BadRequest($"Já existe um template com o nome '{request.Name.Trim()}'. Use outro nome ou edite o template existente.");
         }
 
         var template = new BidTemplate
@@ -185,91 +186,47 @@ public class ShipperController(
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{template.Name}_template.xlsx");
     }
 
-    [HttpGet("excel/analyze-by-path")]
-    [AllowAnonymous]
-    public ActionResult<ExcelAnalysisResult> AnalyzeExcelByPath([FromQuery] string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return BadRequest("Path is required.");
-        }
-
-        if (!System.IO.File.Exists(path))
-        {
-            return NotFound("Excel file not found.");
-        }
-
-        var ext = Path.GetExtension(path);
-        if (!ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".xls", StringComparison.OrdinalIgnoreCase))
-        {
-            return BadRequest("Only .xlsx/.xls files are supported.");
-        }
-
-        var result = excelImportService.AnalyzeColumns(path);
-        return Ok(result);
-    }
-
-    [HttpPost("bids/from-excel")]
-    [RequestSizeLimit(20_000_000)]
-    public async Task<ActionResult<object>> CreateBidFromExcel(
-        [FromForm] IFormFile excelFile,
-        [FromForm] string? title,
-        [FromForm] AuctionType auctionType,
-        [FromForm] DateTime? deadlineUtc,
-        [FromForm] string? requiredDocumentation,
-        [FromForm] decimal? baselineContractValue,
-        [FromForm] Guid? mappingProfileId,
-        CancellationToken ct)
+    [HttpPost("bids")]
+    public async Task<ActionResult<object>> CreateBid(CreateBidRequest request, CancellationToken ct)
     {
         var shipperId = GetUserId();
-        List<BidLane> lanes;
-        if (mappingProfileId.HasValue)
-        {
-            var profile = await db.ExcelMappingProfiles
-                .Include(x => x.Rules)
-                .FirstOrDefaultAsync(x => x.Id == mappingProfileId && x.ShipperId == shipperId, ct);
-            if (profile is null)
-            {
-                return BadRequest("Mapping profile not found.");
-            }
+        if (request.Lanes == null || !request.Lanes.Any())
+            return BadRequest("Adicione pelo menos uma rota/lane ao BID.");
 
-            var fields = profile.Rules
-                .OrderBy(x => x.SortOrder)
-                .Select(x => new TemplateFieldDefinition(x.CanonicalField, x.DisplayName, x.Aliases, x.IsRequired, x.DataType, x.SortOrder))
-                .ToList();
-            lanes = excelImportService.ParseLanes(excelFile, fields);
-        }
-        else
-        {
-            lanes = excelImportService.ParseLanes(excelFile);
-        }
+        var lanes = request.Lanes
+            .Where(l => !string.IsNullOrWhiteSpace(l.Origin) || !string.IsNullOrWhiteSpace(l.Destination))
+            .Select(l => new BidLane
+            {
+                Origin = l.Origin?.Trim() ?? string.Empty,
+                Destination = l.Destination?.Trim() ?? string.Empty,
+                FreightType = l.FreightType?.Trim() ?? string.Empty,
+                VolumeForecast = l.VolumeForecast,
+                SlaRequirements = l.SlaRequirements?.Trim() ?? string.Empty,
+                VehicleType = l.VehicleType?.Trim() ?? string.Empty,
+                InsuranceRequirements = l.InsuranceRequirements?.Trim() ?? string.Empty,
+                PaymentTerms = l.PaymentTerms?.Trim() ?? string.Empty,
+                Region = l.Region?.Trim() ?? string.Empty
+            }).ToList();
 
         if (!lanes.Any())
-        {
-            var analysis = excelImportService.AnalyzeColumns(excelFile);
-            return BadRequest(new
-            {
-                Error = "No valid lanes found in spreadsheet. Could not infer Origin/Destination rows.",
-                DetectedColumns = analysis.Matches,
-                UnmappedHeaders = analysis.UnmappedHeaders
-            });
-        }
+            return BadRequest("Nenhuma rota válida (Origem e Destino são obrigatórios).");
 
         var bid = new BidEvent
         {
             CreatedByShipperId = shipperId,
-            Title = string.IsNullOrWhiteSpace(title) ? $"BID {DateTime.UtcNow:yyyyMMdd_HHmm}" : title,
-            AuctionType = auctionType,
-            DeadlineUtc = deadlineUtc ?? DateTime.UtcNow.AddDays(7),
-            RequiredDocumentation = requiredDocumentation ?? string.Empty,
-            BaselineContractValue = baselineContractValue ?? 0m,
+            Title = string.IsNullOrWhiteSpace(request.Title) ? $"BID {DateTime.UtcNow:yyyyMMdd_HHmm}" : request.Title.Trim(),
+            AuctionType = request.AuctionType,
+            DeadlineUtc = request.DeadlineUtc ?? DateTime.UtcNow.AddDays(7),
+            RequiredDocumentation = request.RequiredDocumentation?.Trim() ?? string.Empty,
+            BaselineContractValue = request.BaselineContractValue ?? 0m,
             Status = BidStatus.Open,
             Lanes = lanes
         };
 
         db.BidEvents.Add(bid);
         await db.SaveChangesAsync(ct);
-        await auditService.LogAsync(shipperId, "CREATE_BID", nameof(BidEvent), bid.Id.ToString(), $"Bid with {lanes.Count} lanes created via Excel import.", ct);
+        await auditService.LogAsync(shipperId, "CREATE_BID", nameof(BidEvent), bid.Id.ToString(),
+            $"BID '{bid.Title}' criado com {lanes.Count} rotas.", ct);
         return Ok(new { bid.Id, bid.Title, LaneCount = lanes.Count });
     }
 
@@ -349,152 +306,6 @@ public class ShipperController(
         var data = await scoringService.BuildDashboardAsync(bidId, new DashboardFilter(null, null, null), null, ct);
         var bytes = exportService.BuildPdfExport((dynamic)data);
         return File(bytes, "application/pdf", $"bid_{bidId}_dashboard.pdf");
-    }
-
-    /* ---------- Excel Mapping Wizard (low-code) ---------- */
-
-    [HttpPost("excel/extract-headers")]
-    public ActionResult<ExtractHeadersResult> ExtractHeaders([FromForm] IFormFile excelFile)
-    {
-        var result = excelImportService.ExtractHeaders(excelFile);
-        return Ok(result);
-    }
-
-    [HttpPost("excel/preview-raw")]
-    [RequestSizeLimit(20_000_000)]
-    public ActionResult<ExcelRawPreviewResult> PreviewRaw([FromForm] IFormFile excelFile, [FromForm] int maxRows = 30)
-    {
-        var result = excelImportService.PreviewRaw(excelFile, maxRows);
-        return Ok(result);
-    }
-
-    [HttpPost("templates/{templateId:guid}/auto-map")]
-    public async Task<ActionResult<object>> AutoMap(
-        Guid templateId,
-        [FromForm] IFormFile excelFile,
-        CancellationToken ct)
-    {
-        var shipperId = GetUserId();
-        var template = await db.BidTemplates
-            .Include(x => x.Columns)
-            .FirstOrDefaultAsync(x => x.Id == templateId && x.ShipperId == shipperId, ct);
-        if (template is null) return NotFound("Template not found.");
-
-        var headersResult = excelImportService.ExtractHeaders(excelFile);
-        var fields = template.Columns
-            .OrderBy(x => x.SortOrder)
-            .Select(x => new TemplateFieldDefinition(x.Key, x.DisplayName, x.Aliases, x.IsRequired, x.DataType, x.SortOrder))
-            .ToList();
-
-        var autoMappings = excelImportService.AutoMapHeaders(headersResult.Headers, fields);
-
-        return Ok(new
-        {
-            headersResult.SheetName,
-            headersResult.DetectedHeaderRow,
-            headersResult.TotalRows,
-            SourceHeaders = headersResult.Headers,
-            TemplateFields = fields,
-            SuggestedMappings = autoMappings
-        });
-    }
-
-    [HttpPost("templates/{templateId:guid}/transform-preview")]
-    [RequestSizeLimit(20_000_000)]
-    public async Task<ActionResult<TransformPreviewResult>> TransformPreview(
-        Guid templateId,
-        [FromForm] IFormFile excelFile,
-        [FromForm] string mappingsJson,
-        [FromForm] int headerRow,
-        CancellationToken ct)
-    {
-        var shipperId = GetUserId();
-        var template = await db.BidTemplates
-            .Include(x => x.Columns)
-            .FirstOrDefaultAsync(x => x.Id == templateId && x.ShipperId == shipperId, ct);
-        if (template is null) return NotFound("Template not found.");
-
-        var mappings = System.Text.Json.JsonSerializer.Deserialize<List<ColumnMappingInput>>(
-            mappingsJson,
-            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? [];
-
-        if (!mappings.Any())
-            return BadRequest("No column mappings provided.");
-
-        var result = excelImportService.TransformExcel(excelFile, headerRow, mappings, 50);
-        return Ok(result);
-    }
-
-    [HttpPost("templates/{templateId:guid}/transform-all")]
-    [RequestSizeLimit(20_000_000)]
-    public async Task<ActionResult<TransformPreviewResult>> TransformAll(
-        Guid templateId,
-        [FromForm] IFormFile excelFile,
-        [FromForm] string mappingsJson,
-        [FromForm] int headerRow,
-        CancellationToken ct)
-    {
-        var shipperId = GetUserId();
-        var template = await db.BidTemplates
-            .Include(x => x.Columns)
-            .FirstOrDefaultAsync(x => x.Id == templateId && x.ShipperId == shipperId, ct);
-        if (template is null) return NotFound("Template not found.");
-
-        var mappings = System.Text.Json.JsonSerializer.Deserialize<List<ColumnMappingInput>>(
-            mappingsJson,
-            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? [];
-
-        var result = excelImportService.TransformExcel(excelFile, headerRow, mappings);
-        return Ok(result);
-    }
-
-    [HttpPost("templates/{templateId:guid}/export-transformed")]
-    [RequestSizeLimit(20_000_000)]
-    public async Task<IActionResult> ExportTransformed(
-        Guid templateId,
-        [FromForm] IFormFile excelFile,
-        [FromForm] string mappingsJson,
-        [FromForm] int headerRow,
-        CancellationToken ct)
-    {
-        var shipperId = GetUserId();
-        var template = await db.BidTemplates
-            .Include(x => x.Columns)
-            .FirstOrDefaultAsync(x => x.Id == templateId && x.ShipperId == shipperId, ct);
-        if (template is null) return NotFound("Template not found.");
-
-        var mappings = System.Text.Json.JsonSerializer.Deserialize<List<ColumnMappingInput>>(
-            mappingsJson,
-            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? [];
-
-        var result = excelImportService.TransformExcel(excelFile, headerRow, mappings);
-
-        using var wb = new ClosedXML.Excel.XLWorkbook();
-        var ws = wb.AddWorksheet("Dados_Transformados");
-        for (var c = 0; c < result.Columns.Count; c++)
-        {
-            ws.Cell(1, c + 1).Value = result.Columns[c];
-            ws.Cell(1, c + 1).Style.Font.Bold = true;
-            ws.Cell(1, c + 1).Style.Fill.BackgroundColor = ClosedXML.Excel.XLColor.FromHtml("#0f2a56");
-            ws.Cell(1, c + 1).Style.Font.FontColor = ClosedXML.Excel.XLColor.White;
-        }
-
-        for (var r = 0; r < result.Rows.Count; r++)
-        {
-            for (var c = 0; c < result.Columns.Count; c++)
-            {
-                var key = result.Columns[c];
-                ws.Cell(r + 2, c + 1).Value = result.Rows[r].GetValueOrDefault(key, "");
-            }
-        }
-
-        ws.Columns().AdjustToContents();
-        using var ms = new MemoryStream();
-        wb.SaveAs(ms);
-        return File(ms.ToArray(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "dados_transformados.xlsx");
     }
 
     /* ---------- Facilities (Matriz / Filiais) ---------- */
@@ -577,6 +388,11 @@ public class ShipperController(
 
         db.ShipperFacilities.Add(facility);
         await db.SaveChangesAsync(ct);
+
+        await routeEngineService.GeocodeAndCacheFacilityAsync(facility, ct);
+        if (facility.Latitude is not null)
+            await db.SaveChangesAsync(ct);
+
         await auditService.LogAsync(shipperId, "CREATE_FACILITY", nameof(ShipperFacility), facility.Id.ToString(), $"Facility '{facility.Name}' ({facility.Type}) created.", ct);
         return Ok(new { facility.Id, facility.Name });
     }
@@ -600,9 +416,20 @@ public class ShipperController(
         facility.State = request.State.Trim().ToUpper();
         facility.ZipCode = request.ZipCode.Trim();
         facility.Country = request.Country?.Trim() ?? "Brasil";
-        facility.Latitude = request.Latitude;
-        facility.Longitude = request.Longitude;
         facility.IsActive = request.IsActive;
+
+        // If lat/lon provided by user, use them directly; otherwise geocode from ZipCode
+        if (request.Latitude is not null && request.Longitude is not null)
+        {
+            facility.Latitude  = request.Latitude;
+            facility.Longitude = request.Longitude;
+        }
+        else
+        {
+            facility.Latitude  = null;
+            facility.Longitude = null;
+            await routeEngineService.GeocodeAndCacheFacilityAsync(facility, ct);
+        }
 
         await db.SaveChangesAsync(ct);
         return Ok();
@@ -620,6 +447,31 @@ public class ShipperController(
         await db.SaveChangesAsync(ct);
         await auditService.LogAsync(shipperId, "DELETE_FACILITY", nameof(ShipperFacility), facilityId.ToString(), $"Facility '{facility.Name}' removed.", ct);
         return Ok();
+    }
+
+    /* ---------- Route Engine ---------- */
+
+    [HttpGet("route-engine/suggestions")]
+    public async Task<ActionResult<List<RouteSuggestion>>> GetRouteSuggestions(
+        [FromQuery] Guid originFacilityId,
+        CancellationToken ct)
+    {
+        var shipperId = GetUserId();
+
+        var facilityExists = await db.ShipperFacilities
+            .AnyAsync(x => x.Id == originFacilityId && x.ShipperId == shipperId && x.IsActive, ct);
+
+        if (!facilityExists)
+            return NotFound("CD de origem não encontrado ou inativo.");
+
+        var otherCount = await db.ShipperFacilities
+            .CountAsync(x => x.ShipperId == shipperId && x.IsActive && x.Id != originFacilityId, ct);
+
+        if (otherCount == 0)
+            return BadRequest("Cadastre pelo menos mais uma unidade ativa para gerar rotas.");
+
+        var suggestions = await routeEngineService.GenerateSuggestionsAsync(shipperId, originFacilityId, ct);
+        return Ok(suggestions);
     }
 
     private Guid GetUserId()

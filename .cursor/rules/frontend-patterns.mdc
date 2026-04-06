@@ -1,0 +1,28 @@
+---
+description: Frontend JavaScript patterns for the portal UI
+globs: "**/*.{js,html,css}"
+alwaysApply: false
+---
+
+# Frontend Patterns
+
+## Navigation
+- Use `navigateTo(pageId)` to switch sections
+- Sections use `class="page-section" data-page="xxx"`
+- Sidebar built dynamically via `SIDEBAR_MENUS` object
+
+## API Calls
+- Always use `authHeaders()` which includes JWT Bearer + X-Correlation-Id
+- Use `apiUrl(path)` to resolve API_BASE correctly
+- Handle errors: check `res.ok`, show `alert(await res.text())` for failures
+
+## DOM Manipulation
+- NEVER use `element.innerHTML +=` — it destroys event listeners
+- Use `document.createElement()` + `appendChild()` for dynamic elements
+- Use specific CSS selectors: `.page-section[data-page="xxx"]`
+
+## Styling (NDD-inspired)
+- Data grids use `.studio-grid` class with `.studio-grid__th` headers
+- Cards use `.card.studio-card` with `.studio-header` toolbar pattern
+- Forms use `.log-filter-group` with `<label>` + `<input>`
+- Buttons: `.studio-btn--primary`, `.studio-btn--success`, `.studio-btn--outline`, `.studio-btn--accent`

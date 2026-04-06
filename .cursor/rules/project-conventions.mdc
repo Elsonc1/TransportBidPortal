@@ -1,0 +1,36 @@
+---
+description: Core coding standards and architecture for the Transport BID Portal
+alwaysApply: true
+---
+
+# Transport BID Portal - Project Conventions
+
+## Stack
+- **Backend**: ASP.NET Core (.NET 10), SQL Server LocalDB, Entity Framework Core
+- **Frontend**: Vanilla JS + HTML5 + CSS3 (SPA-like with sidebar navigation)
+- **Auth**: JWT with Role-Based Access Control (Shipper, Carrier, Admin)
+- **Excel**: ClosedXML for template export/import
+- **PDF**: QuestPDF for report generation
+- **Charts**: Chart.js for data visualization
+
+## Architecture
+- Controllers in `Controllers/` — thin, delegate to services
+- Domain entities in `Domain/` — EF Core models with `[MaxLength]`
+- DTOs/records in `Contracts/Dtos.cs`
+- Services in `Services/` — business logic, interface + implementation
+- Single `AppDbContext` with seed data for demo users
+- `Program.cs` registers all DI services
+
+## Key Patterns
+- Use primary constructors for DI injection
+- Use `CancellationToken ct` on all async endpoints
+- Use `DeleteBehavior.Restrict` for FK relationships that could cascade
+- Use `HasPrecision(18, 2)` for monetary decimals
+- CEP lookups use in-memory cache + SQL fallback via `ICepService`
+- Freight calculation uses OpenRouteService API via `IFreightService`
+
+## Frontend
+- All navigation via `navigateTo(pageId)` — sections have `class="page-section" data-page="xxx"`
+- Sidebar items created dynamically in `sidebarBuild(role)`
+- Use `authHeaders()` for all API calls (includes JWT + CorrelationId)
+- Never use `innerHTML +=` for DOM manipulation (destroys event listeners)

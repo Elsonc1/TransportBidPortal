@@ -1,0 +1,20 @@
+---
+description: Instructs the AI to load project skills before handling any request
+alwaysApply: true
+---
+
+# Load Project Skills First
+
+Before responding to ANY user request in this project, you MUST:
+
+1. Read the project skill file at `.cursor/skills/transport-bid-portal/SKILL.md`
+2. Use its content as context to understand the project architecture, conventions,
+   domain model, APIs, known pitfalls, and coding patterns
+3. Only then proceed to address the user's request
+
+If the task requires deeper context, also read:
+- `.cursor/skills/transport-bid-portal/project-history.md` — evolution and design decisions
+- `.cursor/skills/transport-bid-portal/api-reference.md` — complete API endpoint reference
+
+Do NOT skip this step. The skill files contain critical project-specific knowledge
+that prevents common mistakes and ensures consistency across all changes.

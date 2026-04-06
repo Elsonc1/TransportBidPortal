@@ -49,6 +49,11 @@ builder.Services.AddScoped<IFileStorageService, FileStorageService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IExportService, ExportService>();
+builder.Services.AddHttpClient("OpenRouteService");
+builder.Services.AddHttpClient("ViaCEP");
+builder.Services.AddScoped<ICepService, CepService>();
+builder.Services.AddScoped<IFreightService, FreightService>();
+builder.Services.AddScoped<IRouteEngineService, RouteEngineService>();
 
 var app = builder.Build();
 
@@ -59,7 +64,14 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+        ctx.Context.Response.Headers["Pragma"] = "no-cache";
+    }
+});
 app.UseCors("DevCors");
 app.UseAuthentication();
 app.UseAuthorization();
@@ -77,3 +89,5 @@ using (var scope = app.Services.CreateScope())
 
 app.MapFallbackToFile("index.html");
 app.Run();
+
+public partial class Program { }

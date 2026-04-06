@@ -8,6 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="TransportBidPortal.Tests\**" />
+    <Content Remove="TransportBidPortal.Tests\**" />
+    <EmbeddedResource Remove="TransportBidPortal.Tests\**" />
+    <None Remove="TransportBidPortal.Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.2" />

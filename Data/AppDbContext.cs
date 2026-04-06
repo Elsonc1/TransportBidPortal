@@ -21,6 +21,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppLog> AppLogs => Set<AppLog>();
     public DbSet<ShipperFacility> ShipperFacilities => Set<ShipperFacility>();
     public DbSet<ExcelMappingRule> ExcelMappingRules => Set<ExcelMappingRule>();
+    public DbSet<FreightRate> FreightRates => Set<FreightRate>();
+    public DbSet<CepCache> CepCaches => Set<CepCache>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -95,6 +97,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<CarrierQualification>().Property(x => x.QualificationScore).HasPrecision(18, 2);
         modelBuilder.Entity<CarrierQualification>().Property(x => x.HistoricalOnTimeRate).HasPrecision(18, 2);
         modelBuilder.Entity<CarrierQualification>().Property(x => x.ClaimsRatio).HasPrecision(18, 2);
+        modelBuilder.Entity<FreightRate>().Property(x => x.RatePerKm).HasPrecision(18, 4);
 
         var defaultTemplateId = Guid.Parse("66666666-6666-6666-6666-666666666666");
         modelBuilder.Entity<BidTemplate>().HasData(
@@ -249,5 +252,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<AppLog>().HasIndex(x => x.Level);
         modelBuilder.Entity<AppLog>().HasIndex(x => x.CorrelationId);
         modelBuilder.Entity<AppLog>().HasIndex(x => x.UserId);
+
+        modelBuilder.Entity<CepCache>().HasIndex(x => x.Cep).IsUnique();
+
+        modelBuilder.Entity<FreightRate>().HasIndex(x => x.VehicleType);
+        modelBuilder.Entity<FreightRate>().HasData(
+            new FreightRate { Id = Guid.Parse("f0000001-0001-0001-0001-000000000001"), VehicleType = "Truck", RatePerKm = 3.50m, Description = "Caminhão padrão (truck/toco)" },
+            new FreightRate { Id = Guid.Parse("f0000001-0001-0001-0001-000000000002"), VehicleType = "Carreta", RatePerKm = 4.20m, Description = "Carreta (semi-reboque)" },
+            new FreightRate { Id = Guid.Parse("f0000001-0001-0001-0001-000000000003"), VehicleType = "Bitrem", RatePerKm = 5.10m, Description = "Bitrem (bi-trem)" },
+            new FreightRate { Id = Guid.Parse("f0000001-0001-0001-0001-000000000004"), VehicleType = "VUC", RatePerKm = 2.80m, Description = "Veículo Urbano de Carga" },
+            new FreightRate { Id = Guid.Parse("f0000001-0001-0001-0001-000000000005"), VehicleType = "Van", RatePerKm = 2.20m, Description = "Van de entregas" },
+            new FreightRate { Id = Guid.Parse("f0000001-0001-0001-0001-000000000006"), VehicleType = "Rodotrem", RatePerKm = 5.80m, Description = "Rodotrem (três semi-reboques)" }
+        );
     }
 }

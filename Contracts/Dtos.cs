@@ -6,12 +6,26 @@ public record LoginRequest(string Email, string Password);
 public record LoginResponse(string Token, string Name, string Role);
 public record RegisterRequest(string Name, string Email, string Password, string Role, string Company);
 
-public record CreateBidFromExcelRequest(
+public record CreateBidRequest(
     string Title,
     AuctionType AuctionType,
-    DateTime DeadlineUtc,
-    string RequiredDocumentation,
-    decimal BaselineContractValue);
+    DateTime? DeadlineUtc,
+    string? RequiredDocumentation,
+    decimal? BaselineContractValue,
+    Guid? OriginFacilityId,
+    Guid? TemplateId,
+    List<BidLaneInput> Lanes);
+
+public record BidLaneInput(
+    string Origin,
+    string Destination,
+    string? FreightType,
+    decimal VolumeForecast,
+    string? SlaRequirements,
+    string? VehicleType,
+    string? InsuranceRequirements,
+    string? PaymentTerms,
+    string? Region);
 
 public record InviteCarriersRequest(List<Guid> CarrierIds);
 
@@ -93,6 +107,12 @@ public record SaveMappingProfileRequest(
     string Name,
     bool IsActive,
     List<MappingRuleInput> Rules);
+
+public record RouteSuggestion(
+    Guid OriginFacilityId, string OriginName, string OriginCity, string OriginState, string OriginCep,
+    Guid DestFacilityId,   string DestName,   string DestCity,   string DestState,   string DestCep,
+    double DistanceKm, double DurationHours, decimal EstimatedCost,
+    string SuggestedVehicleType, int Rank);
 
 public record SaveFacilityRequest(
     string Name,

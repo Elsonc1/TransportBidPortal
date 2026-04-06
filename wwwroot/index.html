@@ -93,7 +93,11 @@
               </div>
               <div class="log-filter-group">
                 <label>CEP</label>
-                <input type="text" id="facilityZip" placeholder="01310-100" />
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="text" id="facilityZip" placeholder="01310-100" style="flex:1" />
+                  <button class="studio-btn studio-btn--outline" type="button" onclick="facilityLookupCep()" style="padding:6px 12px;white-space:nowrap">Buscar CEP</button>
+                </div>
+                <span id="facilityCepHint" class="hint" style="margin-top:2px"></span>
               </div>
             </div>
             <div class="facility-form__actions">
@@ -124,37 +128,63 @@
       </section>
 
       <section data-page="bid-create" class="page-section hidden">
-        <div class="card">
-          <h2>Criar BID</h2>
-          <div class="drop-zone" id="dropZone">
-            <p>Drag and drop Excel file here</p>
-            <input id="excelFile" type="file" accept=".xlsx,.xls" />
+        <div class="card studio-card">
+          <div class="studio-header">
+            <div class="studio-header__left">
+              <h3 class="studio-header__title">Criar BID</h3>
+              <span class="studio-header__subtitle">Selecione o template, preencha as rotas e publique o BID</span>
+            </div>
+            <div class="studio-header__right">
+              <select id="bidTemplateSelect" class="studio-select" onchange="bidLoadTemplateColumns()"></select>
+            </div>
           </div>
-          <div class="grid3">
-            <input id="bidTitle" placeholder="BID title" value="RFQ Rodoviario 2026" />
-            <select id="auctionType">
-              <option value="Open">Open</option>
-              <option value="Sealed">Sealed</option>
-              <option value="MultiRound">Multi-Round</option>
-            </select>
-            <input id="deadline" type="datetime-local" />
-            <input id="requiredDocs" placeholder="Required docs" value="ANTT, Insurance, Compliance" />
-            <input id="baselineValue" type="number" step="0.01" placeholder="Baseline contract value" value="900000" />
-            <select id="mappingProfileSelect"><option value="">Auto mapping padr&#227;o</option></select>
-            <button onclick="createBidFromExcel()">Create BID from Excel</button>
+
+          <div style="padding:16px 20px">
+            <div class="grid3">
+              <div class="log-filter-group"><label>T&#237;tulo do BID</label><input id="bidTitle" placeholder="RFQ Rodovi&#225;rio 2026" value="RFQ Rodoviario 2026" /></div>
+              <div class="log-filter-group"><label>Tipo Leil&#227;o</label><select id="auctionType"><option value="Open">Open</option><option value="Sealed">Sealed</option><option value="MultiRound">Multi-Round</option></select></div>
+              <div class="log-filter-group"><label>Deadline</label><input id="deadline" type="datetime-local" /></div>
+            </div>
+            <div class="grid3">
+              <div class="log-filter-group"><label>Documentos exigidos</label><input id="requiredDocs" placeholder="ANTT, Seguro" value="ANTT, Insurance, Compliance" /></div>
+              <div class="log-filter-group"><label>Valor contrato base (R$)</label><input id="baselineValue" type="number" step="0.01" placeholder="900000" value="900000" /></div>
+              <div class="log-filter-group"><label>Origem (CD)</label><select id="bidOriginFacility"></select></div>
+            </div>
+          </div>
+
+          <div style="padding:0 20px 12px">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+              <h4 style="margin:0;color:#0f2a56">Rotas / Lanes</h4>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <button class="studio-btn studio-btn--secondary" id="btnGenerateRoutes" onclick="bidGenerateRoutes()">&#x26A1; Gerar Rotas Automaticamente</button>
+                <button class="studio-btn studio-btn--accent" onclick="bidAddLaneRow()">&#x2795; Nova Rota</button>
+                <span id="routeEngineStatus" style="font-size:12px;color:#8a9ab8"></span>
+              </div>
+            </div>
+            <div class="studio-grid-wrapper" style="max-height:360px;overflow:auto">
+              <table class="studio-grid" id="bidLanesGrid">
+                <thead id="bidLanesHead"></thead>
+                <tbody id="bidLanesBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style="padding:12px 20px 20px;display:flex;gap:10px">
+            <button class="studio-btn studio-btn--primary" onclick="bidCreate()" style="font-size:15px;padding:10px 28px">&#x1F4CB; Criar BID</button>
+            <button class="studio-btn studio-btn--outline" onclick="bidClearLanes()">Limpar Rotas</button>
           </div>
         </div>
 
         <div class="card">
-          <h3>BIDs</h3>
+          <h3>BIDs Criados</h3>
           <div id="bidList"></div>
         </div>
 
         <div class="card">
-          <h3>Invite Carriers</h3>
+          <h3>Convidar Transportadoras</h3>
           <div class="grid2">
             <select id="bidToInvite"></select>
-            <button onclick="inviteCarriers()">Send Invitations</button>
+            <button onclick="inviteCarriers()">Enviar Convites</button>
           </div>
           <div id="carrierChecklist"></div>
         </div>
@@ -210,47 +240,7 @@
         </div>
       </section>
 
-      <section data-page="excel-mapper" class="page-section hidden">
-        <div class="card studio-card">
-          <div class="studio-header">
-            <div class="studio-header__left">
-              <h3 class="studio-header__title">Mapeamento Excel &rarr; Portal</h3>
-              <span class="studio-header__subtitle">Importe qualquer planilha, visualize, selecione a linha de cabe&#231;alho e mapeie as colunas &#8212; 100% low-code</span>
-            </div>
-          </div>
-          <div class="mapper-wizard">
-            <div class="mapper-steps">
-              <div class="mapper-step mapper-step--active" data-step="1"><span class="mapper-step__number">1</span><span class="mapper-step__label">Upload &amp; Revisar</span></div>
-              <div class="mapper-step-arrow">&rarr;</div>
-              <div class="mapper-step" data-step="2"><span class="mapper-step__number">2</span><span class="mapper-step__label">Mapear Colunas</span></div>
-              <div class="mapper-step-arrow">&rarr;</div>
-              <div class="mapper-step" data-step="3"><span class="mapper-step__number">3</span><span class="mapper-step__label">Pr&#233;-visualizar</span></div>
-            </div>
-            <div id="mapperStep1" class="mapper-panel">
-              <div class="mapper-row">
-                <div class="log-filter-group grow"><label>Planilha (.xlsx)</label><input type="file" id="mapperFile" accept=".xlsx,.xls" class="studio-input studio-input--file" onchange="mapperUploadAndPreview()" /></div>
-                <div class="log-filter-group"><label>Template</label><select id="mapperTemplateSelect" class="studio-select"></select></div>
-              </div>
-              <div id="mapperRawContainer" class="hidden">
-                <div class="ep-hint"><span class="ep-hint-icon">&#x1F4A1;</span> Clique na <strong>linha</strong> que cont&#233;m os cabe&#231;alhos. Detectado: linha <span id="mapperDetectedRow" class="ep-selected-info"></span></div>
-                <div class="mapper-info-bar"><span id="mapperRawSheetInfo"></span><span id="mapperSelectedRowInfo" class="ep-selected-info"></span></div>
-                <div class="excel-preview-wrapper"><table class="excel-preview" id="mapperRawGrid"><thead id="mapperRawHead"></thead><tbody id="mapperRawBody"></tbody></table></div>
-                <div class="mapper-actions"><button class="studio-btn studio-btn--primary" onclick="mapperConfirmHeaderAndAutoMap()">Confirmar Cabe&#231;alho e Mapear &rarr;</button></div>
-              </div>
-            </div>
-            <div id="mapperStep2" class="mapper-panel hidden">
-              <div class="mapper-info-bar"><span id="mapperSheetInfo"></span><span id="mapperHeaderInfo" class="ep-selected-info"></span></div>
-              <div class="studio-grid-wrapper"><table class="studio-grid" id="mapperMappingGrid"><thead><tr><th class="studio-grid__th">Campo do Template</th><th class="studio-grid__th">Obrig.</th><th class="studio-grid__th studio-grid__th--wide">Coluna do Excel (origem)</th><th class="studio-grid__th studio-grid__th--center">Confian&#231;a</th></tr></thead><tbody id="mapperMappingBody"></tbody></table></div>
-              <div class="mapper-actions"><button class="studio-btn studio-btn--outline" onclick="mapperGoStep(1)">&larr; Voltar</button><button class="studio-btn studio-btn--primary" onclick="mapperPreview()">Pr&#233;-visualizar &rarr;</button></div>
-            </div>
-            <div id="mapperStep3" class="mapper-panel hidden">
-              <div class="mapper-info-bar"><span id="mapperPreviewInfo"></span></div>
-              <div class="studio-grid-wrapper" style="max-height:420px;overflow:auto"><table class="studio-grid" id="mapperPreviewGrid"><thead id="mapperPreviewHead"></thead><tbody id="mapperPreviewBody"></tbody></table></div>
-              <div class="mapper-actions"><button class="studio-btn studio-btn--outline" onclick="mapperGoStep(2)">&larr; Voltar</button><button class="studio-btn studio-btn--success" onclick="mapperExportAll()">&#x1F4E5; Exportar Excel Completo</button></div>
-            </div>
-          </div>
-        </div>
-      </section>
+      <!-- excel-mapper removed: BID creation is now manual via portal -->
 
       <section data-page="dashboard" class="page-section hidden">
         <div class="card">
@@ -322,6 +312,6 @@
     </div><!-- /app-content -->
   </div><!-- /app-shell -->
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=6"></script>
 </body>
 </html>

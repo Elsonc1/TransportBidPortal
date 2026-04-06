@@ -21,6 +21,49 @@ function authHeaders() {
   return { Authorization: `Bearer ${token}`, "X-Correlation-Id": generateCorrelationId() };
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Select de Origem na grid de lanes: apenas CDs ativos do shipper (`facilitiesCache`). */
+function bidOriginFacilitiesList() {
+  return (facilitiesCache || []).filter(f => f.isActive && (f.type === "Matriz" || f.type === "Filial"));
+}
+
+function bidOriginOptionsHtml(preselectedId) {
+  const list = bidOriginFacilitiesList();
+  const head = `<option value="">-- selecione o CD --</option>`;
+  const body = list
+    .map(f => {
+      const sel =
+        preselectedId != null && preselectedId !== "" && String(f.id) === String(preselectedId)
+          ? " selected"
+          : "";
+      const label = `${f.name} (${f.city}/${f.state}) — ${f.type}`;
+      return `<option value="${f.id}"${sel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  return head + body;
+}
+
+function bidOriginFacilitySelectHtml(preselectedId) {
+  return `<select data-key="Origin" class="bid-lane-origin-select" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px">${bidOriginOptionsHtml(preselectedId)}</select>`;
+}
+
+function bidSyncLaneOriginSelects(forceOriginId) {
+  const selects = [...document.querySelectorAll('#bidLanesBody select[data-key="Origin"]')];
+  if (!selects.length) return;
+
+  selects.forEach(sel => {
+    const current = sel.value || "";
+    const nextSelected = forceOriginId || current;
+    sel.innerHTML = bidOriginOptionsHtml(nextSelected);
+  });
+}
+
 function setDefaultDeadline() {
   const now = new Date(Date.now() + 86400000);
   document.getElementById("deadline").value = now.toISOString().slice(0, 16);
@@ -33,7 +76,6 @@ const SIDEBAR_MENUS = {
     { id: "facilities", icon: "&#x1F3E2;", label: "Unidades (CDs)" },
     { id: "bid-create", icon: "&#x1F4CB;", label: "Criar BID" },
     { id: "template-studio", icon: "&#x1F527;", label: "Template Studio" },
-    { id: "excel-mapper", icon: "&#x1F4CA;", label: "Mapeamento Excel" },
     { divider: true },
     { id: "dashboard", icon: "&#x1F4C8;", label: "Dashboard & Ranking" }
   ],
@@ -126,9 +168,10 @@ async function login() {
   if (userRole === "Shipper") {
     navigateTo("facilities");
     await loadFacilities();
+    bidPopulateOriginSelect();
     await loadCarriers();
-    await loadShipperMappingProfiles();
     await loadTemplates();
+    bidPopulateTemplateSelect();
     await loadBids();
     await loadAudit();
   } else if (userRole === "Admin") {
@@ -153,6 +196,7 @@ async function loadFacilities() {
   if (!res.ok) return;
   facilitiesCache = await res.json();
   renderFacilityGrid();
+  bidPopulateOriginSelect();
 }
 
 function renderFacilityGrid() {
@@ -244,6 +288,35 @@ function facilityCnpjCheck() {
 
 function facilityCancelForm() {
   document.getElementById("facilityForm").classList.add("hidden");
+}
+
+async function facilityLookupCep() {
+  const cep = document.getElementById("facilityZip").value.replace(/\D/g, "");
+  const hint = document.getElementById("facilityCepHint");
+  if (cep.length !== 8) {
+    hint.textContent = "CEP deve ter 8 d\u00edgitos.";
+    hint.style.color = "#c0392b";
+    return;
+  }
+  hint.textContent = "Buscando...";
+  hint.style.color = "#8a9ab8";
+  try {
+    const res = await fetch(apiUrl(`/api/cep/${cep}`), { headers: authHeaders() });
+    if (!res.ok) {
+      hint.textContent = "CEP n\u00e3o encontrado.";
+      hint.style.color = "#c0392b";
+      return;
+    }
+    const data = await res.json();
+    document.getElementById("facilityAddress").value = [data.logradouro, data.complemento].filter(Boolean).join(", ");
+    document.getElementById("facilityCity").value = data.localidade;
+    document.getElementById("facilityState").value = data.uf;
+    hint.textContent = `${data.localidade} - ${data.uf} (${data.bairro})`;
+    hint.style.color = "#1a8754";
+  } catch {
+    hint.textContent = "Erro ao consultar CEP.";
+    hint.style.color = "#c0392b";
+  }
 }
 
 function facilityEdit(id) {
@@ -488,13 +561,20 @@ async function createTemplate() {
     columns
   };
 
-  const res = await fetch(apiUrl("/api/shipper/templates"), {
-    method: "POST",
+  const selectedId = document.getElementById("templateSelect").value;
+  const isUpdate = !!selectedId;
+  const endpoint = isUpdate
+    ? `/api/shipper/templates/${selectedId}`
+    : "/api/shipper/templates";
+  const method = isUpdate ? "PUT" : "POST";
+
+  const res = await fetch(apiUrl(endpoint), {
+    method,
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   if (!res.ok) return alert(await res.text());
-  alert("Template salvo.");
+  alert(isUpdate ? "Template atualizado." : "Template criado.");
   await loadTemplates();
 }
 
@@ -519,7 +599,7 @@ async function loadTemplates() {
     if (tmpl) studioLoadFromTemplate(tmpl);
   };
 
-  mapperPopulateTemplateSelect();
+  bidPopulateTemplateSelect();
 }
 
 function studioLoadFromTemplate(tmpl) {
@@ -583,57 +663,6 @@ async function mapExcelTemplate() {
     </table>
     ${missing ? `<div style="margin-top:8px;color:#c0392b"><strong>Obrigatórios não mapeados:</strong> ${missing}</div>` : '<div style="margin-top:8px;color:#1a8754"><strong>Todos os campos obrigatórios mapeados.</strong></div>'}
   `;
-}
-
-async function createBidFromExcel() {
-  const file = document.getElementById("excelFile").files[0];
-  if (!file) return alert("Select an Excel file first.");
-  const deadlineValue = document.getElementById("deadline").value;
-
-  const form = new FormData();
-  form.append("excelFile", file);
-  form.append("title", document.getElementById("bidTitle").value);
-  form.append("auctionType", document.getElementById("auctionType").value);
-  if (deadlineValue) {
-    form.append("deadlineUtc", new Date(deadlineValue).toISOString());
-  }
-  form.append("requiredDocumentation", document.getElementById("requiredDocs").value);
-  const baselineValue = document.getElementById("baselineValue").value;
-  if (baselineValue) {
-    form.append("baselineContractValue", baselineValue);
-  }
-  const mappingProfileId = document.getElementById("mappingProfileSelect").value;
-  if (mappingProfileId) {
-    form.append("mappingProfileId", mappingProfileId);
-  }
-
-  const res = await fetch(apiUrl("/api/shipper/bids/from-excel"), {
-    method: "POST",
-    headers: authHeaders(),
-    body: form
-  });
-  if (!res.ok) {
-    const contentType = res.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      const err = await res.json();
-      const details = err?.error || err?.title || JSON.stringify(err);
-      return alert(`Import failed: ${details}`);
-    }
-    return alert(await res.text());
-  }
-  alert("BID created from Excel.");
-  await loadBids();
-}
-
-async function loadShipperMappingProfiles() {
-  const res = await fetch(apiUrl("/api/shipper/mapping-profiles"), { headers: authHeaders() });
-  if (!res.ok) return;
-  const profiles = await res.json();
-  const select = document.getElementById("mappingProfileSelect");
-  select.innerHTML = `<option value="">Auto mapping padrão</option>` + profiles
-    .filter(p => p.isActive)
-    .map(p => `<option value="${p.id}">${p.name}</option>`)
-    .join("");
 }
 
 async function loadAdminShippers() {
@@ -758,11 +787,283 @@ async function analyzeAdminProfile() {
     </table>`;
 }
 
+/* ---------- BID CREATION ---------- */
+
+let bidTemplateColumns = [];
+
+function bidPopulateTemplateSelect() {
+  const main = document.getElementById("templateSelect");
+  const bid = document.getElementById("bidTemplateSelect");
+  if (!main || !bid) return;
+  bid.innerHTML = main.innerHTML;
+  bid.value = main.value;
+  bidLoadTemplateColumns();
+}
+
+function bidPopulateOriginSelect() {
+  const sel = document.getElementById("bidOriginFacility");
+  if (!sel) return;
+  const current = sel.value || "";
+  const options = bidOriginFacilitiesList()
+    .map(f => `<option value="${f.id}">${escapeHtml(`${f.name} (${f.city}/${f.state})`)}</option>`)
+    .join("");
+  sel.innerHTML = `<option value="">-- selecione --</option>${options}`;
+  if (current && sel.querySelector(`option[value="${current}"]`)) {
+    sel.value = current;
+  }
+  bidSyncLaneOriginSelects();
+}
+
+function bidLoadTemplateColumns() {
+  const templateId = document.getElementById("bidTemplateSelect").value;
+  if (!templateId) {
+    bidTemplateColumns = [];
+    bidRenderLanesHeader();
+    return;
+  }
+  const sel = document.getElementById("templateSelect");
+  const opt = sel?.querySelector(`option[value="${templateId}"]`);
+  if (!opt) return;
+
+  const res = fetch(apiUrl(`/api/shipper/templates`), { headers: authHeaders() })
+    .then(r => r.json())
+    .then(templates => {
+      const tmpl = templates.find(t => t.id === templateId);
+      if (tmpl && tmpl.columns) {
+        bidTemplateColumns = tmpl.columns.sort((a, b) => a.sortOrder - b.sortOrder);
+      } else {
+        bidTemplateColumns = [];
+      }
+      bidRenderLanesHeader();
+      const tbody = document.getElementById("bidLanesBody");
+      if (!tbody.children.length) bidAddLaneRow();
+    });
+}
+
+function bidRenderLanesHeader() {
+  const thead = document.getElementById("bidLanesHead");
+  if (!thead) return;
+  if (!bidTemplateColumns.length) {
+    thead.innerHTML = `<tr>
+      <th class="studio-grid__th">Origem</th>
+      <th class="studio-grid__th">Destino</th>
+      <th class="studio-grid__th">Tipo Frete</th>
+      <th class="studio-grid__th">Volume</th>
+      <th class="studio-grid__th">Ve\u00edculo</th>
+      <th class="studio-grid__th">SLA</th>
+      <th class="studio-grid__th">Regi\u00e3o</th>
+      <th class="studio-grid__th studio-grid__th--center" style="width:50px"></th>
+    </tr>`;
+    return;
+  }
+  const ths = bidTemplateColumns.map(c =>
+    `<th class="studio-grid__th">${c.displayName}${c.isRequired ? ' <span style="color:#c0392b">*</span>' : ""}</th>`
+  ).join("");
+  thead.innerHTML = `<tr>${ths}<th class="studio-grid__th studio-grid__th--center" style="width:50px"></th></tr>`;
+}
+
+function bidAddLaneRow() {
+  const tbody = document.getElementById("bidLanesBody");
+  if (!tbody) return;
+  const tr = document.createElement("tr");
+  const mainOriginId = document.getElementById("bidOriginFacility")?.value || "";
+
+  if (!bidTemplateColumns.length) {
+    tr.innerHTML = `
+      <td>${bidOriginFacilitySelectHtml(mainOriginId)}</td>
+      <td><input type="text" data-key="Destination" placeholder="Curitiba" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td><input type="text" data-key="FreightType" placeholder="CIF" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td><input type="number" data-key="VolumeForecast" placeholder="0" step="0.01" style="width:80px;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td><input type="text" data-key="VehicleType" placeholder="Carreta" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td><input type="text" data-key="SlaRequirements" placeholder="48h" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td><input type="text" data-key="Region" placeholder="Sul" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td class="studio-td--center"><button class="studio-btn--danger" onclick="this.closest('tr').remove()" title="Remover">&#x2716;</button></td>`;
+  } else {
+    const cells = bidTemplateColumns
+      .map(c => {
+        if ((c.key || "").toLowerCase() === "origin") {
+          return `<td>${bidOriginFacilitySelectHtml(mainOriginId)}</td>`;
+        }
+        const inputType = c.dataType === "number" || c.dataType === "currency" ? "number" : "text";
+        const step = inputType === "number" ? ' step="0.01"' : "";
+        return `<td><input type="${inputType}" data-key="${c.key}"${step} placeholder="${escapeHtml(c.displayName)}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>`;
+      })
+      .join("");
+    tr.innerHTML = cells + `<td class="studio-td--center"><button class="studio-btn--danger" onclick="this.closest('tr').remove()" title="Remover">&#x2716;</button></td>`;
+  }
+
+  tbody.appendChild(tr);
+  tr.querySelector("select, input")?.focus();
+}
+
+function bidClearLanes() {
+  document.getElementById("bidLanesBody").innerHTML = "";
+  bidAddLaneRow();
+}
+
+function bidCollectLanes() {
+  const rows = [...document.querySelectorAll("#bidLanesBody tr")];
+  return rows.map(tr => {
+    const fields = tr.querySelectorAll("[data-key]");
+    const lane = {};
+    fields.forEach(el => {
+      const k = el.dataset.key;
+      if (!k) return;
+      if (el.tagName === "SELECT") {
+        const id = el.value;
+        if (!id) lane[k] = "";
+        else {
+          const fac = facilitiesCache.find(x => String(x.id) === String(id));
+          lane[k] = fac ? `${fac.name} (${fac.city}/${fac.state})` : "";
+        }
+      } else {
+        lane[k] = el.type === "number" ? (parseFloat(el.value) || 0) : el.value.trim();
+      }
+    });
+    return {
+      origin: lane.Origin || "",
+      destination: lane.Destination || "",
+      freightType: lane.FreightType || "",
+      volumeForecast: parseFloat(lane.VolumeForecast) || 0,
+      slaRequirements: lane.SlaRequirements || "",
+      vehicleType: lane.VehicleType || "",
+      insuranceRequirements: lane.InsuranceRequirements || "",
+      paymentTerms: lane.PaymentTerms || "",
+      region: lane.Region || ""
+    };
+  }).filter(l => l.origin || l.destination);
+}
+
+async function bidCreate() {
+  const lanes = bidCollectLanes();
+  if (!lanes.length) return alert("Adicione pelo menos uma rota com Origem ou Destino.");
+
+  const deadlineVal = document.getElementById("deadline").value;
+  const payload = {
+    title: document.getElementById("bidTitle").value,
+    auctionType: document.getElementById("auctionType").value,
+    deadlineUtc: deadlineVal ? new Date(deadlineVal).toISOString() : null,
+    requiredDocumentation: document.getElementById("requiredDocs").value,
+    baselineContractValue: parseFloat(document.getElementById("baselineValue").value) || 0,
+    originFacilityId: document.getElementById("bidOriginFacility").value || null,
+    templateId: document.getElementById("bidTemplateSelect").value || null,
+    lanes
+  };
+
+  const res = await fetch(apiUrl("/api/shipper/bids"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) return alert(await res.text());
+  const data = await res.json();
+  alert(`BID "${data.title}" criado com ${data.laneCount} rotas!`);
+  bidClearLanes();
+  await loadBids();
+}
+
+async function bidGenerateRoutes() {
+  const originId = document.getElementById("bidOriginFacility").value;
+  if (!originId) return alert("Selecione o CD de origem antes de gerar as rotas automaticamente.");
+
+  const btn    = document.getElementById("btnGenerateRoutes");
+  const status = document.getElementById("routeEngineStatus");
+  btn.disabled = true;
+  status.style.color = "#8a9ab8";
+  status.textContent = "Calculando rotas...";
+
+  try {
+    const res = await fetch(apiUrl(`/api/shipper/route-engine/suggestions?originFacilityId=${originId}`), {
+      headers: authHeaders()
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      status.style.color = "#c0392b";
+      status.textContent = "Erro: " + err;
+      return;
+    }
+
+    const suggestions = await res.json();
+    if (!suggestions.length) {
+      status.style.color = "#e67e22";
+      status.textContent = "Nenhuma rota calculada. Verifique se os CEPs das unidades estão corretos e se há API key configurada.";
+      return;
+    }
+
+    // Reset grid to default (no template columns)
+    bidTemplateColumns = [];
+    bidRenderLanesHeader();
+    document.getElementById("bidLanesBody").innerHTML = "";
+
+    suggestions.forEach(s => {
+      const tbody = document.getElementById("bidLanesBody");
+      const tr = document.createElement("tr");
+      tr.dataset.originFacilityId = s.originFacilityId;
+      tr.dataset.destFacilityId   = s.destFacilityId;
+
+      const durText = s.durationHours < 1
+        ? `${Math.round(s.durationHours * 60)}min`
+        : `${s.durationHours.toFixed(1)}h`;
+
+      const costFmt = s.estimatedCost > 0
+        ? `R$ ${s.estimatedCost.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+        : "";
+
+      const title = `#${s.rank} | Distância: ${s.distanceKm} km | Tempo: ${durText} | ${costFmt}`;
+
+      tr.innerHTML = `
+        <td title="${title}">
+          ${bidOriginFacilitySelectHtml(s.originFacilityId)}
+        </td>
+        <td>
+          <input type="text" data-key="Destination"
+            value="${s.destName} – ${s.destCity}/${s.destState}"
+            style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" />
+        </td>
+        <td><input type="text" data-key="FreightType" placeholder="CIF" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td><input type="number" data-key="VolumeForecast" value="0" step="0.01" style="width:80px;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td><input type="text" data-key="VehicleType" value="${s.suggestedVehicleType}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td><input type="text" data-key="SlaRequirements" placeholder="48h" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td><input type="text" data-key="Region" value="${s.destState}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td class="studio-td--center" style="white-space:nowrap">
+          <span title="${title}" style="font-size:11px;color:#0f6ebd;font-weight:600;margin-right:4px">${durText}</span>
+          <span title="${title}" style="font-size:10px;color:#6c7a8f">${s.distanceKm}km</span>
+          <button class="studio-btn--danger" onclick="this.closest('tr').remove()" title="Remover" style="margin-left:4px">&#x2716;</button>
+        </td>`;
+
+      tbody.appendChild(tr);
+    });
+
+    status.style.color = "#27ae60";
+    status.textContent = `${suggestions.length} rota(s) gerada(s) e ordenada(s) por menor tempo.`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function loadBids() {
   const res = await fetch(apiUrl("/api/shipper/bids"), { headers: authHeaders() });
   const bids = await res.json();
-  const tableRows = bids.map(b => `<tr><td>${b.title}</td><td>${b.auctionType}</td><td>${new Date(b.deadlineUtc).toLocaleString()}</td><td>${b.lanes}</td><td>${b.invitedCarriers}</td></tr>`).join("");
-  document.getElementById("bidList").innerHTML = `<table class="table"><tr><th>Title</th><th>Auction</th><th>Deadline</th><th>Lanes</th><th>Invited</th></tr>${tableRows}</table>`;
+  const tableRows = bids.map(b => `<tr>
+    <td><strong>${b.title}</strong></td>
+    <td>${b.auctionType}</td>
+    <td>${new Date(b.deadlineUtc).toLocaleString("pt-BR")}</td>
+    <td class="studio-td--center">${b.lanes}</td>
+    <td class="studio-td--center">${b.invitedCarriers}</td>
+    <td><span class="facility-badge ${b.status === "Open" ? "facility-badge--matriz" : "facility-badge--filial"}">${b.status}</span></td>
+  </tr>`).join("");
+  document.getElementById("bidList").innerHTML = tableRows
+    ? `<table class="studio-grid"><thead><tr>
+        <th class="studio-grid__th">T\u00edtulo</th>
+        <th class="studio-grid__th">Leil\u00e3o</th>
+        <th class="studio-grid__th">Deadline</th>
+        <th class="studio-grid__th studio-grid__th--center">Rotas</th>
+        <th class="studio-grid__th studio-grid__th--center">Convidados</th>
+        <th class="studio-grid__th">Status</th>
+      </tr></thead><tbody>${tableRows}</tbody></table>`
+    : '<p style="color:#8a9ab8;text-align:center;padding:20px">Nenhum BID criado ainda.</p>';
 
   const options = bids.map(b => `<option value="${b.id}" data-deadline="${b.deadlineUtc}">${b.title}</option>`).join("");
   document.getElementById("bidToInvite").innerHTML = options;
@@ -941,24 +1242,17 @@ function number(value) {
 }
 
 function initDragDrop() {
-  const zone = document.getElementById("dropZone");
-  const input = document.getElementById("excelFile");
-
-  zone.addEventListener("dragover", e => {
-    e.preventDefault();
-    zone.classList.add("drag");
-  });
-  zone.addEventListener("dragleave", () => zone.classList.remove("drag"));
-  zone.addEventListener("drop", e => {
-    e.preventDefault();
-    zone.classList.remove("drag");
-    input.files = e.dataTransfer.files;
-  });
   document.getElementById("carrierBidSelect").addEventListener("change", loadLanePricingForm);
   const adminShipper = document.getElementById("adminShipperSelect");
   const adminProfile = document.getElementById("adminProfileSelect");
+  const bidOrigin = document.getElementById("bidOriginFacility");
   if (adminShipper) adminShipper.addEventListener("change", loadAdminProfiles);
   if (adminProfile) adminProfile.addEventListener("change", renderAdminGrid);
+  if (bidOrigin) {
+    bidOrigin.addEventListener("change", () => {
+      if (bidOrigin.value) bidSyncLaneOriginSelects(bidOrigin.value);
+    });
+  }
 }
 
 /* ---------- LOG VIEWER ---------- */
@@ -1114,278 +1408,6 @@ function clearLogFilters() {
   document.getElementById("logFilterCorrelation").value = "";
   document.getElementById("logFilterUser").value = "";
   searchLogs(1);
-}
-
-/* ---------- EXCEL MAPPER WIZARD (low-code) ---------- */
-
-let mapperState = {
-  file: null,
-  templateId: null,
-  templateFields: [],
-  sourceHeaders: [],
-  suggestedMappings: [],
-  headerRow: 1,
-  totalRows: 0,
-  sheetName: "",
-  rawPreview: null
-};
-
-function mapperGoStep(step) {
-  [1, 2, 3].forEach(s => {
-    const panel = document.getElementById(`mapperStep${s}`);
-    const stepEl = document.querySelector(`.mapper-step[data-step="${s}"]`);
-    if (s === step) {
-      panel.classList.remove("hidden");
-      stepEl.classList.add("mapper-step--active");
-      stepEl.classList.remove("mapper-step--done");
-    } else if (s < step) {
-      panel.classList.add("hidden");
-      stepEl.classList.remove("mapper-step--active");
-      stepEl.classList.add("mapper-step--done");
-    } else {
-      panel.classList.add("hidden");
-      stepEl.classList.remove("mapper-step--active", "mapper-step--done");
-    }
-  });
-}
-
-function mapperPopulateTemplateSelect() {
-  const main = document.getElementById("templateSelect");
-  const mapper = document.getElementById("mapperTemplateSelect");
-  if (!main || !mapper) return;
-  mapper.innerHTML = main.innerHTML;
-  mapper.value = main.value;
-}
-
-async function mapperUploadAndPreview() {
-  const fileInput = document.getElementById("mapperFile");
-  if (!fileInput.files[0]) return;
-  mapperState.file = fileInput.files[0];
-
-  const form = new FormData();
-  form.append("excelFile", mapperState.file);
-  form.append("maxRows", "30");
-
-  const res = await fetch(apiUrl("/api/shipper/excel/preview-raw"), {
-    method: "POST",
-    headers: authHeaders(),
-    body: form
-  });
-  if (!res.ok) return alert(await res.text());
-
-  mapperState.rawPreview = await res.json();
-  mapperState.headerRow = mapperState.rawPreview.detectedHeaderRow;
-  mapperState.sheetName = mapperState.rawPreview.sheetName;
-  mapperState.totalRows = mapperState.rawPreview.totalRows;
-
-  document.getElementById("mapperDetectedRow").textContent = mapperState.headerRow;
-  document.getElementById("mapperRawSheetInfo").innerHTML =
-    `Planilha: <strong>${mapperState.rawPreview.sheetName}</strong> | ${mapperState.rawPreview.totalRows} linhas | ${mapperState.rawPreview.totalColumns} colunas`;
-
-  mapperRenderRawGrid();
-  document.getElementById("mapperRawContainer").classList.remove("hidden");
-}
-
-function mapperRenderRawGrid() {
-  const raw = mapperState.rawPreview;
-  if (!raw) return;
-
-  const thead = document.getElementById("mapperRawHead");
-  let headerHtml = `<tr><th></th>`;
-  raw.columnLetters.forEach(letter => {
-    headerHtml += `<th>${letter}</th>`;
-  });
-  headerHtml += `</tr>`;
-  thead.innerHTML = headerHtml;
-
-  const tbody = document.getElementById("mapperRawBody");
-  tbody.innerHTML = "";
-
-  raw.rows.forEach(row => {
-    const tr = document.createElement("tr");
-    const isHeader = row.rowNumber === mapperState.headerRow;
-    const isAbove = row.rowNumber < mapperState.headerRow;
-    if (isHeader) tr.classList.add("ep-header-row");
-    if (isAbove) tr.classList.add("ep-above-header");
-
-    tr.addEventListener("click", () => mapperSelectHeaderRow(row.rowNumber));
-
-    let cellsHtml = `<td class="ep-row-num">${row.rowNumber}</td>`;
-    row.cells.forEach(cell => {
-      cellsHtml += `<td title="${cell.columnLetter}${row.rowNumber}: ${cell.value}">${cell.value}</td>`;
-    });
-    tr.innerHTML = cellsHtml;
-    tbody.appendChild(tr);
-  });
-
-  mapperUpdateSelectedInfo();
-}
-
-function mapperSelectHeaderRow(rowNum) {
-  mapperState.headerRow = rowNum;
-
-  const tbody = document.getElementById("mapperRawBody");
-  [...tbody.children].forEach(tr => {
-    const rn = parseInt(tr.querySelector(".ep-row-num")?.textContent);
-    tr.classList.remove("ep-header-row", "ep-above-header");
-    if (rn === rowNum) tr.classList.add("ep-header-row");
-    else if (rn < rowNum) tr.classList.add("ep-above-header");
-  });
-
-  mapperUpdateSelectedInfo();
-}
-
-function mapperUpdateSelectedInfo() {
-  const raw = mapperState.rawPreview;
-  const headerRowData = raw.rows.find(r => r.rowNumber === mapperState.headerRow);
-  const colNames = headerRowData
-    ? headerRowData.cells.filter(c => c.value).map(c => `${c.columnLetter}: ${c.value}`).join(", ")
-    : "";
-
-  document.getElementById("mapperSelectedRowInfo").innerHTML =
-    `Cabeçalho selecionado: <strong>Linha ${mapperState.headerRow}</strong>`;
-
-  const infoSpan = document.getElementById("mapperDetectedRow");
-  if (infoSpan) infoSpan.textContent = mapperState.headerRow;
-}
-
-async function mapperConfirmHeaderAndAutoMap() {
-  const templateId = document.getElementById("mapperTemplateSelect").value;
-  if (!templateId) return alert("Selecione um template de destino.");
-  if (!mapperState.file) return alert("Faça upload de uma planilha primeiro.");
-
-  mapperState.templateId = templateId;
-
-  const raw = mapperState.rawPreview;
-  const headerRowData = raw.rows.find(r => r.rowNumber === mapperState.headerRow);
-  if (!headerRowData) return alert("Linha de cabeçalho inválida.");
-
-  mapperState.sourceHeaders = headerRowData.cells
-    .filter(c => c.value)
-    .map(c => ({ columnIndex: c.columnIndex, name: c.value, letter: c.columnLetter }));
-
-  const form = new FormData();
-  form.append("excelFile", mapperState.file);
-
-  const res = await fetch(apiUrl(`/api/shipper/templates/${templateId}/auto-map`), {
-    method: "POST",
-    headers: authHeaders(),
-    body: form
-  });
-  if (!res.ok) return alert(await res.text());
-  const data = await res.json();
-
-  mapperState.templateFields = data.templateFields;
-  mapperState.suggestedMappings = data.suggestedMappings;
-
-  document.getElementById("mapperSheetInfo").innerHTML =
-    `Planilha: <strong>${mapperState.sheetName}</strong> | ${mapperState.totalRows} linhas | ${mapperState.sourceHeaders.length} colunas`;
-  document.getElementById("mapperHeaderInfo").innerHTML =
-    `Cabeçalho: <strong>Linha ${mapperState.headerRow}</strong>`;
-
-  mapperRenderMappingGrid();
-  mapperGoStep(2);
-}
-
-function mapperRenderMappingGrid() {
-  const tbody = document.getElementById("mapperMappingBody");
-  tbody.innerHTML = "";
-
-  mapperState.templateFields.forEach(field => {
-    const suggestion = mapperState.suggestedMappings.find(m => m.canonicalField === field.key);
-    const matchedColIdx = suggestion && suggestion.columnIndex > 0 ? suggestion.columnIndex : -1;
-    const confidence = suggestion ? suggestion.confidence : 0;
-
-    const options = [`<option value="-1">— não mapear —</option>`]
-      .concat(mapperState.sourceHeaders.map(h =>
-        `<option value="${h.columnIndex}" ${h.columnIndex === matchedColIdx ? "selected" : ""}>[${h.letter}] ${h.name}</option>`
-      ));
-
-    const confPct = Math.round(confidence * 100);
-    const confClass = confPct >= 80 ? "mapper-confidence--high" :
-                      confPct >= 50 ? "mapper-confidence--mid" :
-                      confPct > 0 ? "mapper-confidence--low" : "mapper-confidence--none";
-
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><strong>${field.displayName}</strong> <span style="color:#8a9ab8;font-size:11px">(${field.key})</span></td>
-      <td class="studio-td--center">${field.isRequired ? '<span style="color:#c0392b;font-weight:700">Sim</span>' : 'Não'}</td>
-      <td><select class="mapper-col-select" data-field-key="${field.key}" style="width:100%;padding:6px 8px;border-radius:4px;border:1px solid #d6e0f0;font-size:13px">${options.join("")}</select></td>
-      <td class="studio-td--center"><span class="mapper-confidence ${confClass}">${confPct > 0 ? confPct + "%" : "—"}</span></td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-function mapperCollectMappings() {
-  const selects = document.querySelectorAll(".mapper-col-select");
-  const mappings = [];
-  selects.forEach(sel => {
-    const colIdx = parseInt(sel.value);
-    if (colIdx > 0) {
-      mappings.push({
-        sourceColumnIndex: colIdx,
-        targetFieldKey: sel.dataset.fieldKey
-      });
-    }
-  });
-  return mappings;
-}
-
-async function mapperPreview() {
-  const mappings = mapperCollectMappings();
-  if (!mappings.length) return alert("Mapeie pelo menos uma coluna.");
-
-  const form = new FormData();
-  form.append("excelFile", mapperState.file);
-  form.append("mappingsJson", JSON.stringify(mappings));
-  form.append("headerRow", mapperState.headerRow);
-
-  const res = await fetch(apiUrl(`/api/shipper/templates/${mapperState.templateId}/transform-preview`), {
-    method: "POST",
-    headers: authHeaders(),
-    body: form
-  });
-  if (!res.ok) return alert(await res.text());
-  const data = await res.json();
-
-  document.getElementById("mapperPreviewInfo").innerHTML =
-    `<span class="mapper-preview-count">${data.totalRows} linhas transformadas (preview: até 50)</span>`;
-
-  const thead = document.getElementById("mapperPreviewHead");
-  thead.innerHTML = `<tr>${data.columns.map(c => `<th class="studio-grid__th">${c}</th>`).join("")}</tr>`;
-
-  const tbody = document.getElementById("mapperPreviewBody");
-  tbody.innerHTML = data.rows.map(row =>
-    `<tr>${data.columns.map(c => `<td style="padding:6px 10px;font-size:13px">${row[c] || ""}</td>`).join("")}</tr>`
-  ).join("");
-
-  mapperGoStep(3);
-}
-
-async function mapperExportAll() {
-  const mappings = mapperCollectMappings();
-  if (!mappings.length) return alert("Sem mapeamento definido.");
-
-  const form = new FormData();
-  form.append("excelFile", mapperState.file);
-  form.append("mappingsJson", JSON.stringify(mappings));
-  form.append("headerRow", mapperState.headerRow);
-
-  const res = await fetch(apiUrl(`/api/shipper/templates/${mapperState.templateId}/export-transformed`), {
-    method: "POST",
-    headers: authHeaders(),
-    body: form
-  });
-  if (!res.ok) return alert(await res.text());
-
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "dados_transformados.xlsx";
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 /* ---------- INIT ---------- */
