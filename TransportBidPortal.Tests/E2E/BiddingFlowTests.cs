@@ -61,8 +61,8 @@ public class BiddingFlowTests : IClassFixture<TestWebApplicationFactory>, IDispo
             "ANTT, Seguro", 200000m, null, templateId,
             new List<BidLaneInput>
             {
-                new("Sao Paulo", "Curitiba", "CIF", 500, "48h", "Truck", "Obrigatorio", "30 dias", "Sul"),
-                new("Sao Paulo", "Porto Alegre", "FOB", 300, "72h", "Carreta", null, null, "Sul")
+                new("Sao Paulo", "Curitiba", TestSeedIds.DeliveryPointCuritibaId, "CIF", 500, "48h", "Truck", "Obrigatorio", "30 dias", "Sul"),
+                new("Sao Paulo", "Joinville", TestSeedIds.DeliveryPointJoinvilleId, "FOB", 300, "72h", "Carreta", null, null, "Sul")
             });
 
         var bidRes = await _shipperClient.PostAsJsonAsync("/api/shipper/bids", bidReq);
@@ -165,24 +165,9 @@ public class BiddingFlowTests : IClassFixture<TestWebApplicationFactory>, IDispo
 
     private (Guid shipperId, Guid carrierId) SeedUsers()
     {
-        var sId = Guid.NewGuid();
-        var cId = Guid.NewGuid();
-        using var db = _factory.CreateDbContext();
-        db.Users.AddRange(
-            new AppUser
-            {
-                Id = sId, Name = "E2E Shipper", Email = $"e2e_s_{sId:N}@test.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Test123!"),
-                Role = UserRole.Shipper, Company = "E2E Shipper Co"
-            },
-            new AppUser
-            {
-                Id = cId, Name = "E2E Carrier", Email = $"e2e_c_{cId:N}@test.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Test123!"),
-                Role = UserRole.Carrier, Company = "E2E Carrier Co"
-            }
-        );
-        db.SaveChanges();
-        return (sId, cId);
+        using (var db = _factory.CreateDbContext())
+        {
+            return (TestSeedIds.DemoShipperId, TestSeedIds.DemoCarrierAId);
+        }
     }
 }

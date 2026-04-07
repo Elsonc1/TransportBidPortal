@@ -218,3 +218,120 @@ button:hover { background: #173f94; }
 .log-page-btn { padding: 6px 12px; border-radius: 6px; font-size: 13px; background: #e8eefc; color: #1c4db3; border: 1px solid #c3d1ea; cursor: pointer; min-width: 36px; }
 .log-page-btn:hover { background: #d0dcf8; }
 .log-page-btn.active { background: #1c4db3; color: #fff; }
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 52px 0 0 0;
+  background: rgba(6, 18, 41, 0.45);
+  z-index: 80;
+}
+
+@media (max-width: 1024px) {
+  .container { margin-top: 64px; padding: 0 10px 16px; }
+  .app-content { margin-left: 0; padding: 14px; }
+  .sidebar { transform: translateX(-100%); width: 260px; transition: transform .22s cubic-bezier(.4,0,.2,1); }
+  .sidebar--collapsed,
+  .sidebar--pinned { width: 260px; }
+  .sidebar--collapsed:hover { width: 260px; }
+  .sidebar--collapsed .sidebar__label { opacity: 1; }
+  .sidebar.sidebar--mobile-open { transform: translateX(0); }
+  .topbar { padding: 0 12px; }
+  .topbar h1 { font-size: 14px; }
+  .card { padding: 12px; border-radius: 8px; }
+
+  input, select, textarea, button {
+    min-height: 42px;
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  .studio-btn { min-height: 40px; }
+  .studio-btn--danger { min-height: auto; }
+  .studio-header,
+  .studio-toolbar,
+  .facility-form,
+  .studio-footer { padding-left: 12px; padding-right: 12px; }
+  .studio-select { min-width: 150px; }
+}
+
+@media (max-width: 768px) {
+  .grid2, .grid3, .grid4 { grid-template-columns: 1fr; gap: 8px; }
+  .actions { flex-direction: column; }
+  .actions > * { width: 100%; }
+  .facility-form__grid { flex-direction: column; gap: 8px; }
+  .facility-form__actions { flex-direction: column; }
+  .facility-form__actions > * { width: 100%; }
+  .log-filter-row { flex-direction: column; }
+  .log-filter-group { min-width: 0; }
+  .charts { grid-template-columns: 1fr; }
+  .charts canvas { max-height: 280px; }
+  .studio-grid { min-width: 720px; }
+  .kpi { padding: 14px; }
+  .log-filter-group input, .log-filter-group select { min-height: 42px; }
+}
+
+@media (max-width: 480px) {
+  .topbar { height: 48px; }
+  .app-shell { margin-top: 48px; min-height: calc(100vh - 48px); }
+  .sidebar { top: 48px; }
+  .sidebar-backdrop { inset: 48px 0 0 0; }
+  .topbar h1 { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+  #userChip { font-size: 12px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app-content { padding: 10px; }
+  .card { padding: 10px; }
+  .studio-header__title { font-size: 15px; }
+  .studio-header__subtitle { font-size: 11px; }
+  .studio-header { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .studio-header__right { width: 100%; justify-content: flex-end; }
+  .studio-toolbar { align-items: stretch; }
+  .studio-toolbar__left, .studio-toolbar__actions { width: 100%; }
+  .studio-toolbar__actions > * { flex: 1; min-width: 0; }
+  .mapper-step { width: 100%; justify-content: flex-start; }
+  .mapper-step-arrow { display: none; }
+  .mapper-actions { flex-direction: column; }
+  .mapper-actions > * { width: 100%; }
+  .studio-grid-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Card mode for dense data tables on small phones */
+  .mobile-card-table thead { display: none; }
+  .mobile-card-table tbody tr {
+    display: block;
+    margin-bottom: 10px;
+    border: 1px solid #dbe5f7;
+    border-radius: 10px;
+    padding: 8px;
+    background: #fff;
+  }
+  .mobile-card-table tbody td {
+    display: grid;
+    grid-template-columns: 112px 1fr;
+    gap: 8px;
+    align-items: start;
+    border-bottom: 1px dashed #edf2fb;
+    padding: 7px 4px;
+    font-size: 13px;
+  }
+  .mobile-card-table tbody td:last-child { border-bottom: 0; }
+  .mobile-card-table tbody td::before {
+    content: attr(data-label);
+    color: #5b6f8f;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+  }
+
+  .carrier-lane-card {
+    border: 1px solid #dbe5f7;
+    border-radius: 10px;
+    padding: 8px;
+    margin-bottom: 8px;
+    background: #fff;
+  }
+  #lanePricing .carrier-lane-card span {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  #lanePricing .carrier-lane-card .lane-price {
+    width: 100%;
+  }
+}

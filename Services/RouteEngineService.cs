@@ -11,6 +11,7 @@ public interface IRouteEngineService
 {
     Task<List<RouteSuggestion>> GenerateSuggestionsAsync(Guid shipperId, Guid originFacilityId, CancellationToken ct);
     Task GeocodeAndCacheFacilityAsync(ShipperFacility facility, CancellationToken ct);
+    Task GeocodeAndCacheDeliveryPointAsync(ShipperDeliveryPoint point, CancellationToken ct);
 }
 
 public class RouteEngineService(
@@ -38,13 +39,15 @@ public class RouteEngineService(
         var origin = facilities.FirstOrDefault(f => f.Id == originFacilityId);
         if (origin is null) return [];
 
-        var destinations = facilities.Where(f => f.Id != originFacilityId).ToList();
+        var destinations = await db.ShipperDeliveryPoints
+            .Where(p => p.ShipperId == shipperId && p.IsActive)
+            .ToListAsync(ct);
         if (destinations.Count == 0) return [];
 
         // Geocode missing coordinates
         await EnsureGeocodedAsync(origin, apiKey, ct);
         foreach (var dest in destinations)
-            await EnsureGeocodedAsync(dest, apiKey, ct);
+            await EnsureGeocodedDeliveryPointAsync(dest, apiKey, ct);
 
         await db.SaveChangesAsync(ct);
 
@@ -79,10 +82,13 @@ public class RouteEngineService(
             var durHours  = Math.Round(durationSec / 3600.0, 2);
             var cost      = Math.Round((decimal)distKm * defaultRate.RatePerKm, 2);
 
+            // Pedágio: placeholder até integração (ITollEstimator); mantido no contrato para o front/dashboard futuro.
+            const decimal tollStub = 0m;
+            var destRegion = BrazilMacroRegion.EffectiveRegion(dest.Region, dest.State);
             suggestions.Add(new RouteSuggestion(
                 origin.Id, origin.Name, origin.City, origin.State, origin.ZipCode,
-                dest.Id,   dest.Name,   dest.City,   dest.State,   dest.ZipCode,
-                distKm, durHours, cost, defaultRate.VehicleType, 0));
+                dest.Id, dest.Name, dest.City, dest.State, dest.ZipCode, destRegion,
+                distKm, durHours, cost, defaultRate.VehicleType, tollStub, 0));
         }
 
         return [.. suggestions
@@ -100,6 +106,16 @@ public class RouteEngineService(
         await EnsureGeocodedAsync(facility, apiKey, ct);
     }
 
+    public async Task GeocodeAndCacheDeliveryPointAsync(ShipperDeliveryPoint point, CancellationToken ct)
+    {
+        if (point.Latitude is not null && point.Longitude is not null) return;
+
+        var apiKey = configuration["OpenRouteService:ApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey)) return;
+
+        await EnsureGeocodedDeliveryPointAsync(point, apiKey, ct);
+    }
+
     // ----- private helpers -----
 
     private async Task EnsureGeocodedAsync(ShipperFacility facility, string apiKey, CancellationToken ct)
@@ -112,6 +128,18 @@ public class RouteEngineService(
         facility.Latitude  = (decimal)coords.Value.Lat;
         facility.Longitude = (decimal)coords.Value.Lon;
         logger.LogInformation("Geocoded facility {Name}: {Lat},{Lon}", facility.Name, facility.Latitude, facility.Longitude);
+    }
+
+    private async Task EnsureGeocodedDeliveryPointAsync(ShipperDeliveryPoint point, string apiKey, CancellationToken ct)
+    {
+        if (point.Latitude is not null && point.Longitude is not null) return;
+
+        var coords = await GeocodeAsync(point.ZipCode, point.City, point.State, apiKey, ct);
+        if (coords is null) return;
+
+        point.Latitude  = (decimal)coords.Value.Lat;
+        point.Longitude = (decimal)coords.Value.Lon;
+        logger.LogInformation("Geocoded delivery point {Name}: {Lat},{Lon}", point.Name, point.Latitude, point.Longitude);
     }
 
     private async Task<(double Lon, double Lat)?> GeocodeAsync(

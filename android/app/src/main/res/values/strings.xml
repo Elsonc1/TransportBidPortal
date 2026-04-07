@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Transport BID Portal</string>
+    <string name="title_activity_main">Transport BID Portal</string>
+    <string name="package_name">com.transportbid.portal</string>
+    <string name="custom_url_scheme">com.transportbid.portal</string>
+</resources>

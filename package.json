@@ -1,0 +1,35 @@
+{
+  "name": "transportbidportal",
+  "version": "1.0.0",
+  "description": "Enterprise-style Transport Bidding portal built with ASP.NET Core, SQL Server, HTML5/CSS3/JavaScript, JWT auth, and BI-style dashboards.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "ui:install": "playwright install chromium",
+    "ui:smoke": "playwright test tests/ui/smoke.spec.js",
+    "ui:smoke:headed": "playwright test tests/ui/smoke.spec.js --headed",
+    "mobile:sync": "npx cap sync android",
+    "mobile:open:android": "npx cap open android",
+    "mobile:run:android": "npx cap run android"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Elsonc1/TransportBidPortal.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Elsonc1/TransportBidPortal/issues"
+  },
+  "homepage": "https://github.com/Elsonc1/TransportBidPortal#readme",
+  "devDependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@playwright/test": "^1.59.1"
+  }
+}

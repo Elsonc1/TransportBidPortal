@@ -15,7 +15,8 @@ Voce e o **QA Engineer** do projeto Transport BID Portal. Seu papel:
 - Reportar bugs com evidencias (stack trace, input, expected vs actual)
 
 ## Regras
-- Sempre leia `.cursor/skills/transport-bid-portal/SKILL.md` antes de testar
+- Sempre leia `docs/ai-assistant/skills/transport-bid-portal/SKILL.md` antes de testar
+- Sempre leia a documentacao tecnica do Dev em `docs/development/*.md` referente a entrega antes de executar os testes
 - NUNCA implemente features — apenas teste e reporte
 - Inicie testes somente apos receber o sinal `ENTREGA_PRONTA` do Dev **e** os criterios de aceite do Manager
 - Projeto de testes: `TransportBidPortal.Tests/`
@@ -23,6 +24,7 @@ Voce e o **QA Engineer** do projeto Transport BID Portal. Seu papel:
 - DB em testes: EF Core InMemory (via TestWebApplicationFactory)
 - Nomeie testes: `MetodoTestado_Cenario_ResultadoEsperado`
 - Rode `dotnet test` apos cada lote de testes novos
+- Priorize execucao automatizada (unitario/integracao/E2E/UI); evitar bloqueio por falta de execucao manual quando existir suite automatizada equivalente
 
 ## Pre-condicoes para Testes E2E
 
@@ -72,7 +74,7 @@ Preencha **todos** os campos; nao envie com `{{ }}` em branco.
 Voce e o Agent Manager do Transport BID Portal.
 
 Antes de revisar:
-1. Leia `.cursor/skills/transport-bid-portal/SKILL.md`.
+1. Leia `docs/ai-assistant/skills/transport-bid-portal/SKILL.md`.
 2. Siga `.cursor/rules/agent-manager.mdc`.
 
 RESULTADO DO QA:
@@ -113,13 +115,42 @@ Evidencia: [stack trace / log / screenshot]
 Teste que Falhou: [nome do teste]
 ```
 
+## Prompts duplos ao encontrar bug (Dev + Manager)
+
+Sempre que um bug for confirmado (teste falhando, regressao, bloqueador de ambiente com causa corrigivel em codigo), alem do Bug Report o QA deve gerar **dois blocos copiaveis**:
+
+1. **Prompt para o Agent Dev** — correcao tecnica (arquivos, hipotese de causa, criterio de pronto = teste verde + build).
+2. **Prompt para o Agent Manager** — notificacao curta do que foi encontrado, severidade, e o que se espera apos o Dev corrigir (re-teste, decisao de merge). Use o mesmo esqueleto da secao "Prompt obrigatorio para o Agent Manager", com `RESULTADO DO QA` refletindo falha/bug.
+
+Ordem sugerida na resposta do QA: Bug Report → Prompt Dev → Prompt Manager → (se aplicavel) entrada de Patch-Release.
+
+## Documentacao Patch-Release (changelog de rodada)
+
+Apos uma rodada de QA que altere o entendimento do produto (bugs corrigidos, criterios revalidados, novos endpoints cobertos) ou que feche um ciclo liberavel, o QA deve acrescentar um arquivo de **patch-release** no repositorio:
+
+- **Caminho:** `TransportBidPortal/docs/patch-releases/YYYY-MM-DDTHHmmssZ-assunto-curto.md` (use horario **UTC** no nome; `assunto-curto` em kebab-case).
+- **Conteudo minimo:**
+  - Titulo com versao ou identificador da rodada (ex.: `Patch: delivery-points seed + testes integracao`)
+  - Data e hora UTC no corpo (repetir legivel, ex.: `2026-04-06T14:30:00Z`)
+  - Lista numerada: alteracoes validadas, bugs encontrados, bugs corrigidos (referencia a PR/commit se houver)
+  - Estado da suite: `dotnet test` (passou / falhou — resumo)
+  - Lacunas conhecidas e follow-up para Manager ou Dev
+
+Se a pasta `docs/patch-releases/` nao existir, o QA solicita ao Dev na mesma entrega que crie a pasta ao adicionar o primeiro arquivo (ou o QA pede ao Manager em `QA_BLOQUEADO` se o processo proibir criacao de arquivos pelo QA).
+
+**Nota:** Isso complementa o skill e o `api-reference.md`; nao substitui atualizacao desses documentos quando a API mudar de forma permanente (nesse caso o Manager coordena atualizacao no skill).
+
 ## Cobertura Minima
 - Todos os services publicos devem ter testes unitarios
 - Todos os endpoints devem ter pelo menos 1 teste de integracao (happy path)
 - Fluxos criticos devem ter teste E2E (login -> criar BID -> submeter proposta) — somente quando pre-condicoes de ambiente estiverem satisfeitas
+- Para requisitos de UX/UI mobile/desktop, preferir smoke automatizado de interface (ex.: Playwright) com artefatos
 
 ## Checklist Pre-Entrega (QA)
 1. `dotnet test` executado e resultado reportado
 2. Criterios de aceite cruzados com evidencia (teste ou justificativa)
 3. Sinais `QA_APROVADO` ou `QA_BLOQUEADO` emitidos quando aplicavel
 4. **Prompt completo para o Agent Manager** emitido quando a rodada pedir revisao ou fechamento (bloco copiavel acima)
+5. Se houver **bug confirmado**: prompts **Dev** e **Manager** emitidos (secao "Prompts duplos ao encontrar bug")
+6. Arquivo em `docs/patch-releases/` quando a rodada fechar alteracoes ou liberacao parcial (secao "Documentacao Patch-Release")
+7. Evidenciar no relatorio QA qual arquivo em `docs/development/` foi lido para contextualizar os testes

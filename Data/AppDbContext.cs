@@ -20,6 +20,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ExcelMappingProfile> ExcelMappingProfiles => Set<ExcelMappingProfile>();
     public DbSet<AppLog> AppLogs => Set<AppLog>();
     public DbSet<ShipperFacility> ShipperFacilities => Set<ShipperFacility>();
+    public DbSet<ShipperDeliveryPoint> ShipperDeliveryPoints => Set<ShipperDeliveryPoint>();
     public DbSet<ExcelMappingRule> ExcelMappingRules => Set<ExcelMappingRule>();
     public DbSet<FreightRate> FreightRates => Set<FreightRate>();
     public DbSet<CepCache> CepCaches => Set<CepCache>();
@@ -45,6 +46,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(x => x.CreatedByShipper)
             .WithMany()
             .HasForeignKey(x => x.CreatedByShipperId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<BidLane>()
+            .HasOne(x => x.DestinationDeliveryPoint)
+            .WithMany()
+            .HasForeignKey(x => x.DestinationDeliveryPointId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<BidInvitation>()
@@ -94,6 +101,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<CarrierProposalLanePrice>().Property(x => x.PricePerLane).HasPrecision(18, 2);
         modelBuilder.Entity<BidEvent>().Property(x => x.BaselineContractValue).HasPrecision(18, 2);
         modelBuilder.Entity<BidLane>().Property(x => x.VolumeForecast).HasPrecision(18, 2);
+        modelBuilder.Entity<BidLane>().Property(x => x.EstimatedToll).HasPrecision(18, 2);
         modelBuilder.Entity<CarrierQualification>().Property(x => x.QualificationScore).HasPrecision(18, 2);
         modelBuilder.Entity<CarrierQualification>().Property(x => x.HistoricalOnTimeRate).HasPrecision(18, 2);
         modelBuilder.Entity<CarrierQualification>().Property(x => x.ClaimsRatio).HasPrecision(18, 2);
@@ -204,6 +212,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<ShipperFacility>().Property(x => x.Latitude).HasPrecision(10, 7);
         modelBuilder.Entity<ShipperFacility>().Property(x => x.Longitude).HasPrecision(10, 7);
 
+        modelBuilder.Entity<ShipperDeliveryPoint>()
+            .HasOne(x => x.Shipper)
+            .WithMany()
+            .HasForeignKey(x => x.ShipperId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<ShipperDeliveryPoint>().Property(x => x.Latitude).HasPrecision(10, 7);
+        modelBuilder.Entity<ShipperDeliveryPoint>().Property(x => x.Longitude).HasPrecision(10, 7);
+
         modelBuilder.Entity<ShipperFacility>().HasData(
             new ShipperFacility
             {
@@ -242,6 +259,45 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 City = "Joinville",
                 State = "SC",
                 ZipCode = "89219-100",
+                IsActive = true
+            }
+        );
+
+        modelBuilder.Entity<ShipperDeliveryPoint>().HasData(
+            new ShipperDeliveryPoint
+            {
+                Id = Guid.Parse("0e111111-1111-1111-1111-111111111111"),
+                ShipperId = shipperId,
+                Name = "Cliente — Loja Curitiba Centro",
+                Address = "Rua XV de Novembro, 129",
+                City = "Curitiba",
+                State = "PR",
+                ZipCode = "80020-310",
+                Region = "",
+                IsActive = true
+            },
+            new ShipperDeliveryPoint
+            {
+                Id = Guid.Parse("0e222222-2222-2222-2222-222222222222"),
+                ShipperId = shipperId,
+                Name = "Cliente — DC Joinville Norte",
+                Address = "Av. Santos Dumont, 2000",
+                City = "Joinville",
+                State = "SC",
+                ZipCode = "89219-100",
+                Region = "S",
+                IsActive = true
+            },
+            new ShipperDeliveryPoint
+            {
+                Id = Guid.Parse("0e333333-3333-3333-3333-333333333333"),
+                ShipperId = shipperId,
+                Name = "Cliente — SP Zona Leste",
+                Address = "Av. Aricanduva, 5500",
+                City = "São Paulo",
+                State = "SP",
+                ZipCode = "03527-000",
+                Region = "",
                 IsActive = true
             }
         );

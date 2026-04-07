@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1e40" />
+  <meta name="description" content="Plataforma de licitacao de frete para embarcadores e transportadoras." />
   <title>Transport Bidding Portal</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -122,6 +126,86 @@
                 </tr>
               </thead>
               <tbody id="facilityGridBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section data-page="delivery-points" class="page-section hidden">
+        <div class="card studio-card">
+          <div class="studio-header">
+            <div class="studio-header__left">
+              <h3 class="studio-header__title">Pontos de entrega</h3>
+              <span class="studio-header__subtitle">Clientes e locais de descarga &#8212; usados como destino nas rotas do BID (CEP via ViaCEP; geocode ORS como nos CDs)</span>
+            </div>
+            <div class="studio-header__right">
+              <button class="studio-btn studio-btn--accent" onclick="deliveryPointShowForm()">
+                <span class="studio-icon">&#x2795;</span> Novo ponto
+              </button>
+            </div>
+          </div>
+
+          <div id="dpForm" class="facility-form hidden">
+            <input type="hidden" id="dpEditId" value="" />
+            <div class="facility-form__grid">
+              <div class="log-filter-group grow">
+                <label>Nome (ex.: Cliente Loja Centro)</label>
+                <input type="text" id="dpName" placeholder="Nome do ponto / cliente" />
+              </div>
+              <div class="log-filter-group grow">
+                <label>Regi&#227;o (opcional; se vazio, usa macro-regi&#227;o pela UF)</label>
+                <input type="text" id="dpRegion" placeholder="Sul, Sudeste ou c&#243;digo interno" />
+              </div>
+              <div class="log-filter-group">
+                <label class="studio-check" style="display:flex;align-items:center;gap:8px;margin-top:22px">
+                  <input type="checkbox" id="dpIsActive" checked /> Ativo
+                </label>
+              </div>
+            </div>
+            <div class="facility-form__grid">
+              <div class="log-filter-group grow">
+                <label>Endere&#231;o</label>
+                <input type="text" id="dpAddress" placeholder="Rua, n&#250;mero" />
+              </div>
+              <div class="log-filter-group">
+                <label>Cidade</label>
+                <input type="text" id="dpCity" placeholder="Curitiba" />
+              </div>
+              <div class="log-filter-group">
+                <label>UF</label>
+                <input type="text" id="dpState" placeholder="PR" maxlength="2" style="width:60px" />
+              </div>
+              <div class="log-filter-group">
+                <label>CEP</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="text" id="dpZip" placeholder="80020-310" style="flex:1" />
+                  <button class="studio-btn studio-btn--outline" type="button" onclick="deliveryPointLookupCep()" style="padding:6px 12px;white-space:nowrap">Buscar CEP</button>
+                </div>
+                <span id="dpCepHint" class="hint" style="margin-top:2px"></span>
+              </div>
+            </div>
+            <div class="facility-form__actions">
+              <button class="studio-btn studio-btn--primary" onclick="deliveryPointSave()">Salvar</button>
+              <button class="studio-btn studio-btn--outline" onclick="deliveryPointCancelForm()">Cancelar</button>
+            </div>
+          </div>
+
+          <div class="studio-grid-wrapper">
+            <table class="studio-grid" id="deliveryPointGrid">
+              <thead>
+                <tr>
+                  <th class="studio-grid__th">Nome</th>
+                  <th class="studio-grid__th">Endere&#231;o</th>
+                  <th class="studio-grid__th">Cidade</th>
+                  <th class="studio-grid__th">UF</th>
+                  <th class="studio-grid__th">CEP</th>
+                  <th class="studio-grid__th">Regi&#227;o</th>
+                  <th class="studio-grid__th studio-grid__th--center">Ativo</th>
+                  <th class="studio-grid__th studio-grid__th--center">Lat/Lon</th>
+                  <th class="studio-grid__th studio-grid__th--center">A&#231;&#245;es</th>
+                </tr>
+              </thead>
+              <tbody id="deliveryPointGridBody"></tbody>
             </table>
           </div>
         </div>
@@ -311,7 +395,15 @@
 
     </div><!-- /app-content -->
   </div><!-- /app-shell -->
+  <div id="sidebarBackdrop" class="sidebar-backdrop hidden" aria-hidden="true"></div>
 
-  <script src="./app.js?v=6"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("./sw.js", { scope: "/" }).catch(function () {});
+      });
+    }
+  </script>
+  <script src="./app.js?v=12"></script>
 </body>
 </html>

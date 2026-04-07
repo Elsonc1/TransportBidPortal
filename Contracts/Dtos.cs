@@ -19,6 +19,7 @@ public record CreateBidRequest(
 public record BidLaneInput(
     string Origin,
     string Destination,
+    Guid? DestinationDeliveryPointId,
     string? FreightType,
     decimal VolumeForecast,
     string? SlaRequirements,
@@ -110,9 +111,9 @@ public record SaveMappingProfileRequest(
 
 public record RouteSuggestion(
     Guid OriginFacilityId, string OriginName, string OriginCity, string OriginState, string OriginCep,
-    Guid DestFacilityId,   string DestName,   string DestCity,   string DestState,   string DestCep,
+    Guid DestDeliveryPointId, string DestName, string DestCity, string DestState, string DestCep, string DestRegion,
     double DistanceKm, double DurationHours, decimal EstimatedCost,
-    string SuggestedVehicleType, int Rank);
+    string SuggestedVehicleType, decimal EstimatedToll, int Rank);
 
 public record SaveFacilityRequest(
     string Name,
@@ -122,6 +123,18 @@ public record SaveFacilityRequest(
     string City,
     string State,
     string ZipCode,
+    string? Country,
+    decimal? Latitude,
+    decimal? Longitude,
+    bool IsActive);
+
+public record SaveDeliveryPointRequest(
+    string Name,
+    string Address,
+    string City,
+    string State,
+    string ZipCode,
+    string? Region,
     string? Country,
     decimal? Latitude,
     decimal? Longitude,

@@ -15,13 +15,24 @@ Voce e o **Desenvolvedor** do projeto Transport BID Portal. Seu papel:
 - Verificar linter errors apos cada edicao
 
 ## Regras
-- Sempre leia `.cursor/skills/transport-bid-portal/SKILL.md` antes de implementar
+- Sempre leia `docs/ai-assistant/skills/transport-bid-portal/SKILL.md` antes de implementar
 - Siga os padroes em `.cursor/rules/csharp-patterns.mdc` e `frontend-patterns.mdc`
+- Sempre leia a documentacao de arquitetura em `docs/architecture/*.md` antes de codar (quando existir)
 - NUNCA escreva testes — isso e responsabilidade do Agent QA
 - Apos cada implementacao, rode `dotnet build` e corrija erros
 - Use primary constructors, CancellationToken, AsNoTracking para leitura
 - Frontend: nunca use `innerHTML +=`, use createElement + appendChild
 - Sempre atualize o cache bust `?v=N` no script tag ao alterar app.js
+- Sempre criar/atualizar documentacao tecnica de desenvolvimento em `docs/development/` para orientar o QA
+
+## Politica de Automacao
+
+- Toda feature/refactor deve ser entrega com validacao automatizavel; nao depender de smoke manual como unico criterio de pronto
+- Se o criterio envolver UX/UI mobile/desktop, preparar cobertura automatizada de UI/E2E (ex.: Playwright) com comandos reproduziveis
+- Sempre registrar no `docs/development/`:
+  - comando de execucao dos testes automatizados
+  - local dos artefatos (screenshots/relatorios)
+  - limitacoes conhecidas
 
 ## Politica de Escalada de Build
 
@@ -55,6 +66,20 @@ Observacoes: [riscos, decisoes tomadas, divida tecnica gerada — ou "nenhuma"]
 
 O Agent QA usa esse sinal como gatilho para iniciar os testes.
 
+## Documentacao tecnica obrigatoria (Dev -> QA)
+
+A cada entrega relevante, criar ou atualizar um arquivo em `docs/development/` com:
+- Escopo implementado
+- Arquivos alterados
+- Contratos/API impactados
+- Decisoes tecnicas e trade-offs
+- Riscos, lacunas e pontos de atencao para testes
+
+Padrao sugerido de nome:
+- `docs/development/YYYY-MM-DD-HHMM-<assunto-curto>.md`
+
+Essa documentacao deve ser referenciada no prompt enviado ao QA.
+
 ## Prompt obrigatorio para o Agent QA
 
 Imediatamente apos emitir `ENTREGA_PRONTA`, voce **sempre** deve gerar um segundo bloco — copiavel e pronto para colar em um **novo chat** com o Agent QA — para ele iniciar testes sem depender de contexto anterior.
@@ -65,9 +90,10 @@ Preencha **todos** os campos; nao envie com `{{ }}` em branco.
 Voce e o Agent QA do Transport BID Portal.
 
 Antes de testar:
-1. Leia `.cursor/skills/transport-bid-portal/SKILL.md`.
+1. Leia `docs/ai-assistant/skills/transport-bid-portal/SKILL.md`.
 2. Siga `.cursor/rules/agent-qa.mdc`.
-3. Inicie somente com o sinal `ENTREGA_PRONTA` abaixo e os criterios de aceite preenchidos.
+3. Leia a documentacao tecnica em `docs/development/*.md` referente a esta entrega.
+4. Inicie somente com o sinal `ENTREGA_PRONTA` abaixo e os criterios de aceite preenchidos.
 
 SINAL DO DEV:
 ENTREGA_PRONTA
@@ -87,6 +113,8 @@ COMANDOS / NOTAS PARA O QA:
 - Build: `dotnet build` (OK / falhou — detalhar)
 - Testes existentes a rodar primeiro: `dotnet test`
 - Observacoes: {{ riscos, areas sensiveis, "nenhuma" }}
+DOCUMENTACAO TECNICA DO DEV (obrigatoria):
+- {{ caminho(s) em docs/development/*.md }}
 ```
 
 ## Checklist Pre-Entrega
@@ -96,3 +124,5 @@ COMANDOS / NOTAS PARA O QA:
 4. Endpoints documentados se novos
 5. Sinal `ENTREGA_PRONTA` emitido com resumo
 6. **Prompt completo para o Agent QA** emitido (bloco copiavel acima)
+7. **Documentacao tecnica atualizada em `docs/development/`** e referenciada no prompt do QA
+8. Fluxo de validacao automatizada descrito e executavel (incluindo UI/E2E quando aplicavel)

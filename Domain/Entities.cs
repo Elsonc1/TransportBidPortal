@@ -37,6 +37,8 @@ public class BidLane
     public BidEvent? BidEvent { get; set; }
     [MaxLength(120)] public string Origin { get; set; } = string.Empty;
     [MaxLength(120)] public string Destination { get; set; } = string.Empty;
+    public Guid? DestinationDeliveryPointId { get; set; }
+    public ShipperDeliveryPoint? DestinationDeliveryPoint { get; set; }
     [MaxLength(80)] public string FreightType { get; set; } = string.Empty;
     public decimal VolumeForecast { get; set; }
     [MaxLength(140)] public string SlaRequirements { get; set; } = string.Empty;
@@ -44,6 +46,8 @@ public class BidLane
     [MaxLength(120)] public string InsuranceRequirements { get; set; } = string.Empty;
     [MaxLength(120)] public string PaymentTerms { get; set; } = string.Empty;
     [MaxLength(80)] public string Region { get; set; } = string.Empty;
+    /// <summary>Reservado para integração futura de pedágio (v1: preenchido via <c>ITollEstimator</c> stub).</summary>
+    public decimal? EstimatedToll { get; set; }
 }
 
 public class BidInvitation
@@ -166,6 +170,26 @@ public class ShipperFacility
     [MaxLength(2)] public string State { get; set; } = string.Empty;
     [MaxLength(10)] public string ZipCode { get; set; } = string.Empty;
     [MaxLength(100)] public string Country { get; set; } = "Brasil";
+    public decimal? Latitude { get; set; }
+    public decimal? Longitude { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Ponto de entrega (cliente/local de descarga) do embarcador — destino canônico nas lanes do BID.</summary>
+public class ShipperDeliveryPoint
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ShipperId { get; set; }
+    public AppUser? Shipper { get; set; }
+    [MaxLength(180)] public string Name { get; set; } = string.Empty;
+    [MaxLength(200)] public string Address { get; set; } = string.Empty;
+    [MaxLength(120)] public string City { get; set; } = string.Empty;
+    [MaxLength(2)] public string State { get; set; } = string.Empty;
+    [MaxLength(10)] public string ZipCode { get; set; } = string.Empty;
+    [MaxLength(100)] public string Country { get; set; } = "Brasil";
+    /// <summary>Região comercial ou macro; se vazia, a UI/backend derivam da UF (macro-região BR).</summary>
+    [MaxLength(80)] public string Region { get; set; } = string.Empty;
     public decimal? Latitude { get; set; }
     public decimal? Longitude { get; set; }
     public bool IsActive { get; set; } = true;

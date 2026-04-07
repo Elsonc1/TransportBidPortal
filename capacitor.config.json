@@ -1,0 +1,9 @@
+{
+  "appId": "com.transportbid.portal",
+  "appName": "Transport BID Portal",
+  "webDir": "wwwroot",
+  "server": {
+    "url": "http://10.0.2.2:5157",
+    "cleartext": true
+  }
+}

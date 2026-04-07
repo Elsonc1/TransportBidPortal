@@ -21,6 +21,10 @@
 | POST | /api/shipper/facilities | Create facility (auto-geocodes) |
 | PUT | /api/shipper/facilities/{id} | Update facility (auto-geocodes) |
 | DELETE | /api/shipper/facilities/{id} | Delete facility |
+| GET | /api/shipper/delivery-points | List shipper delivery points (destinations) |
+| POST | /api/shipper/delivery-points | Create delivery point (auto-geocodes) |
+| PUT | /api/shipper/delivery-points/{pointId} | Update delivery point (auto-geocodes) |
+| DELETE | /api/shipper/delivery-points/{pointId} | Delete delivery point (blocked if used in a lane) |
 | GET | /api/shipper/route-engine/suggestions?originFacilityId= | Generate routes from origin CD |
 | GET | /api/shipper/dashboard?bidId= | Dashboard data for a BID |
 | GET | /api/shipper/dashboard/export-excel?bidId= | Export dashboard as Excel |

@@ -19,7 +19,8 @@ public class ShipperController(
     IAuditService auditService,
     IScoringService scoringService,
     IExportService exportService,
-    IRouteEngineService routeEngineService) : ControllerBase
+    IRouteEngineService routeEngineService,
+    ITollEstimator tollEstimator) : ControllerBase
 {
     [HttpGet("templates")]
     public async Task<ActionResult<object>> GetTemplates(CancellationToken ct)
@@ -193,23 +194,65 @@ public class ShipperController(
         if (request.Lanes == null || !request.Lanes.Any())
             return BadRequest("Adicione pelo menos uma rota/lane ao BID.");
 
-        var lanes = request.Lanes
-            .Where(l => !string.IsNullOrWhiteSpace(l.Origin) || !string.IsNullOrWhiteSpace(l.Destination))
-            .Select(l => new BidLane
+        ShipperFacility? originFacilityForToll = null;
+        if (request.OriginFacilityId is { } ofid)
+        {
+            originFacilityForToll = await db.ShipperFacilities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(f => f.Id == ofid && f.ShipperId == shipperId, ct);
+        }
+
+        var pointIds = request.Lanes
+            .Select(l => l.DestinationDeliveryPointId)
+            .Where(g => g is { } pid && pid != Guid.Empty)
+            .Select(g => g!.Value)
+            .Distinct()
+            .ToList();
+
+        var points = await db.ShipperDeliveryPoints
+            .AsNoTracking()
+            .Where(p => pointIds.Contains(p.Id) && p.ShipperId == shipperId && p.IsActive)
+            .ToDictionaryAsync(p => p.Id, ct);
+
+        var lanes = new List<BidLane>();
+        foreach (var l in request.Lanes)
+        {
+            var origin = l.Origin?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(origin))
+                continue;
+
+            if (l.DestinationDeliveryPointId is not { } dpId || dpId == Guid.Empty)
+                return BadRequest("Cada rota deve ter um ponto de entrega (destino) selecionado no cadastro.");
+
+            if (!points.TryGetValue(dpId, out var point))
+                return BadRequest("Ponto de entrega inválido, inativo ou de outro embarcador.");
+
+            var destSnapshot = $"{point.Name} ({point.City}/{point.State})";
+            // Região: valor cadastrado no ponto ou macro-região derivada da UF (BrazilMacroRegion).
+            var region = BrazilMacroRegion.EffectiveRegion(point.Region, point.State);
+
+            var toll = await tollEstimator.EstimateTollAsync(
+                originFacilityForToll?.Latitude, originFacilityForToll?.Longitude,
+                point.Latitude, point.Longitude, ct);
+
+            lanes.Add(new BidLane
             {
-                Origin = l.Origin?.Trim() ?? string.Empty,
-                Destination = l.Destination?.Trim() ?? string.Empty,
+                Origin = origin,
+                Destination = destSnapshot,
+                DestinationDeliveryPointId = dpId,
                 FreightType = l.FreightType?.Trim() ?? string.Empty,
                 VolumeForecast = l.VolumeForecast,
                 SlaRequirements = l.SlaRequirements?.Trim() ?? string.Empty,
                 VehicleType = l.VehicleType?.Trim() ?? string.Empty,
                 InsuranceRequirements = l.InsuranceRequirements?.Trim() ?? string.Empty,
                 PaymentTerms = l.PaymentTerms?.Trim() ?? string.Empty,
-                Region = l.Region?.Trim() ?? string.Empty
-            }).ToList();
+                Region = region,
+                EstimatedToll = toll
+            });
+        }
 
         if (!lanes.Any())
-            return BadRequest("Nenhuma rota válida (Origem e Destino são obrigatórios).");
+            return BadRequest("Nenhuma rota válida (origem e ponto de entrega são obrigatórios).");
 
         var bid = new BidEvent
         {
@@ -449,6 +492,125 @@ public class ShipperController(
         return Ok();
     }
 
+    /* ---------- Pontos de entrega (clientes / destinos) ---------- */
+
+    [HttpGet("delivery-points")]
+    public async Task<ActionResult<object>> GetDeliveryPoints(CancellationToken ct)
+    {
+        var shipperId = GetUserId();
+        var list = await db.ShipperDeliveryPoints
+            .AsNoTracking()
+            .Where(x => x.ShipperId == shipperId)
+            .OrderBy(x => x.Name)
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                x.Address,
+                x.City,
+                x.State,
+                x.ZipCode,
+                x.Region,
+                x.Country,
+                x.Latitude,
+                x.Longitude,
+                x.IsActive
+            })
+            .ToListAsync(ct);
+        return Ok(list);
+    }
+
+    [HttpPost("delivery-points")]
+    public async Task<ActionResult<object>> CreateDeliveryPoint(SaveDeliveryPointRequest request, CancellationToken ct)
+    {
+        var shipperId = GetUserId();
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest("Informe o nome do ponto de entrega.");
+        if (string.IsNullOrWhiteSpace(request.City) || string.IsNullOrWhiteSpace(request.State))
+            return BadRequest("Preencha cidade e UF.");
+
+        var point = new ShipperDeliveryPoint
+        {
+            ShipperId = shipperId,
+            Name = request.Name.Trim(),
+            Address = (request.Address ?? string.Empty).Trim(),
+            City = request.City.Trim(),
+            State = request.State.Trim().ToUpperInvariant(),
+            ZipCode = (request.ZipCode ?? string.Empty).Trim(),
+            Region = request.Region?.Trim() ?? string.Empty,
+            Country = request.Country?.Trim() ?? "Brasil",
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            IsActive = request.IsActive
+        };
+
+        db.ShipperDeliveryPoints.Add(point);
+        await db.SaveChangesAsync(ct);
+
+        if (request.Latitude is null || request.Longitude is null)
+        {
+            await routeEngineService.GeocodeAndCacheDeliveryPointAsync(point, ct);
+            if (point.Latitude is not null)
+                await db.SaveChangesAsync(ct);
+        }
+
+        await auditService.LogAsync(shipperId, "CREATE_DELIVERY_POINT", nameof(ShipperDeliveryPoint), point.Id.ToString(),
+            $"Ponto de entrega '{point.Name}' criado.", ct);
+        return Ok(new { point.Id, point.Name });
+    }
+
+    [HttpPut("delivery-points/{pointId:guid}")]
+    public async Task<ActionResult> UpdateDeliveryPoint(Guid pointId, SaveDeliveryPointRequest request, CancellationToken ct)
+    {
+        var shipperId = GetUserId();
+        var point = await db.ShipperDeliveryPoints
+            .FirstOrDefaultAsync(x => x.Id == pointId && x.ShipperId == shipperId, ct);
+        if (point is null) return NotFound("Ponto de entrega não encontrado.");
+
+        point.Name = request.Name.Trim();
+        point.Address = (request.Address ?? string.Empty).Trim();
+        point.City = request.City.Trim();
+        point.State = request.State.Trim().ToUpperInvariant();
+        point.ZipCode = (request.ZipCode ?? string.Empty).Trim();
+        point.Region = request.Region?.Trim() ?? string.Empty;
+        point.Country = request.Country?.Trim() ?? "Brasil";
+        point.IsActive = request.IsActive;
+
+        if (request.Latitude is not null && request.Longitude is not null)
+        {
+            point.Latitude = request.Latitude;
+            point.Longitude = request.Longitude;
+        }
+        else
+        {
+            point.Latitude = null;
+            point.Longitude = null;
+            await routeEngineService.GeocodeAndCacheDeliveryPointAsync(point, ct);
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Ok();
+    }
+
+    [HttpDelete("delivery-points/{pointId:guid}")]
+    public async Task<ActionResult> DeleteDeliveryPoint(Guid pointId, CancellationToken ct)
+    {
+        var shipperId = GetUserId();
+        var point = await db.ShipperDeliveryPoints
+            .FirstOrDefaultAsync(x => x.Id == pointId && x.ShipperId == shipperId, ct);
+        if (point is null) return NotFound("Ponto de entrega não encontrado.");
+
+        var inUse = await db.BidLanes.AnyAsync(l => l.DestinationDeliveryPointId == pointId, ct);
+        if (inUse)
+            return BadRequest("Este ponto está vinculado a rotas de BIDs existentes e não pode ser removido.");
+
+        db.ShipperDeliveryPoints.Remove(point);
+        await db.SaveChangesAsync(ct);
+        await auditService.LogAsync(shipperId, "DELETE_DELIVERY_POINT", nameof(ShipperDeliveryPoint), pointId.ToString(),
+            $"Ponto '{point.Name}' removido.", ct);
+        return Ok();
+    }
+
     /* ---------- Route Engine ---------- */
 
     [HttpGet("route-engine/suggestions")]
@@ -464,11 +626,11 @@ public class ShipperController(
         if (!facilityExists)
             return NotFound("CD de origem não encontrado ou inativo.");
 
-        var otherCount = await db.ShipperFacilities
-            .CountAsync(x => x.ShipperId == shipperId && x.IsActive && x.Id != originFacilityId, ct);
+        var deliveryCount = await db.ShipperDeliveryPoints
+            .CountAsync(x => x.ShipperId == shipperId && x.IsActive, ct);
 
-        if (otherCount == 0)
-            return BadRequest("Cadastre pelo menos mais uma unidade ativa para gerar rotas.");
+        if (deliveryCount == 0)
+            return BadRequest("Cadastre pelo menos um ponto de entrega ativo para gerar rotas a partir do CD de origem.");
 
         var suggestions = await routeEngineService.GenerateSuggestionsAsync(shipperId, originFacilityId, ct);
         return Ok(suggestions);

@@ -13,6 +13,24 @@ Voce e o **Manager** do projeto Transport BID Portal. Seu papel:
 - Tomar decisoes de arquitetura e avaliar trade-offs
 - Revisar entregas do Dev e QA, aprovando ou solicitando correcoes
 - Manter a visao macro do projeto e garantir alinhamento
+- Criar e manter documentacao de arquitetura para orientar o Dev
+- Ler sempre as documentacoes de arquitetura e de desenvolvimento tecnico antes de decidir
+
+## Documentacao obrigatoria (Manager)
+
+- **Documentacao de arquitetura (Manager -> Dev):** manter arquivos em `docs/architecture/`
+- **Documentacao tecnica de desenvolvimento (Dev -> QA):** considerar arquivos em `docs/development/`
+- Ao iniciar qualquer planejamento/revisao, ler:
+  1. `docs/ai-assistant/skills/transport-bid-portal/SKILL.md`
+  2. `docs/architecture/*.md` (quando existirem)
+  3. `docs/development/*.md` (quando existirem)
+
+Se as pastas `docs/architecture/` e `docs/development/` nao existirem, solicitar ao Dev sua criacao na proxima tarefa.
+
+### Governanca AI (repositorio)
+
+- **Skill e regras** com nome profissional: `docs/ai-assistant/` (versionado no Git; sobrevive a troca de maquina).
+- **Cursor IDE** so carrega regras automaticamente de `.cursor/rules/*.mdc` — manter alinhado com `docs/ai-assistant/rules/` via `scripts/Sync-AiAssistantToCursor.ps1`. Detalhes: `docs/ai-assistant/README.md`.
 
 ## Arquitetura Front-end — Grid de Lanes (Criar BID)
 
@@ -33,9 +51,10 @@ Preencha **todos** os campos marcados com `{{ }}` antes de enviar — nao envie 
 Voce e o Agent Dev do Transport BID Portal.
 
 Antes de codar:
-1. Leia `.cursor/skills/transport-bid-portal/SKILL.md`.
+1. Leia `docs/ai-assistant/skills/transport-bid-portal/SKILL.md`.
 2. Siga `.cursor/rules/agent-dev.mdc` e os padroes do projeto (`csharp-patterns.mdc`, `frontend-patterns.mdc` se aplicavel).
 3. Respeite a arquitetura definida pelo Manager em `.cursor/rules/agent-manager.mdc`, secao "Arquitetura Front-end — Grid de Lanes (Criar BID)".
+4. Leia toda a documentacao de arquitetura aplicavel em `docs/architecture/*.md` antes de implementar.
 
 TIPO: {{ feature | bug | refactor }}
 ESCOPO: {{ descricao clara do que deve ser feito }}
@@ -48,12 +67,13 @@ CONTEXTO ADICIONAL: {{ decisoes do Manager, restricoes, dependencias ou "nenhum"
 Entrega:
 - Implemente apenas o escopo acima; nao escreva testes (Agent QA).
 - Apos mudancas: execute `dotnet build` e corrija erros; atualize `?v=N` em `index.html` se alterar `app.js`.
+- Crie/atualize documentacao tecnica da entrega em `docs/development/` para o QA ler antes dos testes (escopo, decisoes, riscos, impacto em API/UI).
 - Ao finalizar, emita o sinal: `ENTREGA_PRONTA` seguido de um resumo em bullet points do que foi alterado e por que.
 ```
 
 **Prompt minimo** (quando a solicitacao ja esta toda na mensagem do usuario): cole apenas isto antes do seu pedido:
 
-`Atue como Agent Dev do Transport BID Portal; leia .cursor/skills/transport-bid-portal/SKILL.md e .cursor/rules/agent-dev.mdc; implemente respeitando a secao "Arquitetura Front-end — Grid de Lanes" em .cursor/rules/agent-manager.mdc. Segue o pedido:`
+`Atue como Agent Dev do Transport BID Portal; leia docs/ai-assistant/skills/transport-bid-portal/SKILL.md e .cursor/rules/agent-dev.mdc; implemente respeitando a secao "Arquitetura Front-end — Grid de Lanes" em .cursor/rules/agent-manager.mdc. Segue o pedido:`
 
 ## Handoff entre Agentes
 
@@ -71,7 +91,11 @@ O fluxo padrao e: **Manager -> Dev -> QA -> Manager (revisao)**.
 ## Regras
 - NUNCA implemente codigo diretamente — delegue ao Agent Dev
 - NUNCA escreva testes — delegue ao Agent QA
-- Sempre leia `.cursor/skills/transport-bid-portal/SKILL.md` antes de planejar
+- Sempre leia `docs/ai-assistant/skills/transport-bid-portal/SKILL.md` antes de planejar
+- Sempre criar/atualizar documentacao de arquitetura em `docs/architecture/` ao abrir frentes novas ou mudar direcao tecnica
+- Sempre ler `docs/architecture/` e `docs/development/` antes de aprovar merge ou emitir `REVISAO_NECESSARIA`
+- Exigir criterios de aceite validaveis de forma automatica (sem depender de smoke manual humano como gate de merge)
+- Priorizar automacao de UI/E2E (ex.: Playwright) para cenarios de UX antes de aprovar fases mobile
 - Use o modo Plan do Cursor para criar planos estruturados
 - Defina criterios de aceite claros para cada tarefa
 - Priorize: seguranca > corretude > performance > UX

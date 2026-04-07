@@ -63,8 +63,8 @@ public class RouteEngineServiceTests : IDisposable
     public async Task GenerateSuggestions_WithDestinations_ReturnsSortedByTime()
     {
         var origin = AddFacility("CD SP", "01001000", -23.55m, -46.63m);
-        var dest1 = AddFacility("CD RJ", "20040020", -22.90m, -43.17m);
-        var dest2 = AddFacility("CD CWB", "80010000", -25.43m, -49.27m);
+        AddDeliveryPoint("Ponto RJ", "20040020", -22.90m, -43.17m);
+        AddDeliveryPoint("Ponto CWB", "80010000", -25.43m, -49.27m);
 
         _db.FreightRates.Add(new FreightRate { VehicleType = "Truck", RatePerKm = 2.0m, IsActive = true });
         await _db.SaveChangesAsync();
@@ -84,7 +84,7 @@ public class RouteEngineServiceTests : IDisposable
         result.Should().HaveCount(2);
         result[0].Rank.Should().Be(1);
         result[0].DurationHours.Should().BeLessThan(result[1].DurationHours);
-        result[0].DestName.Should().Be("CD RJ");
+        result[0].DestName.Should().Be("Ponto RJ");
         result[1].Rank.Should().Be(2);
     }
 
@@ -92,7 +92,7 @@ public class RouteEngineServiceTests : IDisposable
     public async Task GenerateSuggestions_EstimatedCostCalculated()
     {
         var origin = AddFacility("CD SP", "01001000", -23.55m, -46.63m);
-        AddFacility("CD RJ", "20040020", -22.90m, -43.17m);
+        AddDeliveryPoint("Ponto RJ", "20040020", -22.90m, -43.17m);
 
         // Clear any seeded rates and add our own
         _db.FreightRates.RemoveRange(_db.FreightRates);
@@ -152,6 +152,15 @@ public class RouteEngineServiceTests : IDisposable
         };
         _db.ShipperFacilities.Add(f);
         return f;
+    }
+
+    private void AddDeliveryPoint(string name, string zip, decimal? lat, decimal? lon)
+    {
+        _db.ShipperDeliveryPoints.Add(new ShipperDeliveryPoint
+        {
+            ShipperId = _shipperId, Name = name, ZipCode = zip,
+            City = name, State = "SP", Latitude = lat, Longitude = lon, IsActive = true
+        });
     }
 
     private RouteEngineService CreateService(string geocodeResponse, string matrixResponse, IConfiguration? config = null)

@@ -7,7 +7,17 @@ let heatmapChart;
 let adminProfiles = [];
 let logCurrentPage = 1;
 let sidebarPinned = false;
-const API_BASE = window.location.protocol === "file:" ? "http://localhost:5157" : "";
+/** Base da API; vazio = mesmo host (browser ou Capacitor com `server.url` apontando para o backend). */
+const API_BASE = (() => {
+  if (window.location.protocol === "file:") return "http://localhost:5157";
+  try {
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const b = window.__TRANSPORT_BID_API_BASE__;
+      if (typeof b === "string" && b.trim()) return b.replace(/\/$/, "");
+    }
+  } catch (_) {}
+  return "";
+})();
 
 function generateCorrelationId() {
   return crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "").slice(0, 12) : Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -26,6 +36,20 @@ function escapeHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/"/g, "&quot;");
+}
+
+function applyMobileTableLabels(tableSelector) {
+  if (!tableSelector) return;
+  const table = document.querySelector(tableSelector);
+  if (!table) return;
+  const headers = [...table.querySelectorAll("thead th")].map(th => (th.textContent || "").trim());
+  table.querySelectorAll("tbody tr").forEach(tr => {
+    [...tr.children].forEach((td, idx) => {
+      if (td.tagName !== "TD") return;
+      const label = headers[idx] || "";
+      if (label) td.setAttribute("data-label", label);
+    });
+  });
 }
 
 /** Select de Origem na grid de lanes: apenas CDs ativos do shipper (`facilitiesCache`). */
@@ -64,6 +88,81 @@ function bidSyncLaneOriginSelects(forceOriginId) {
   });
 }
 
+let deliveryPointsCache = [];
+
+function bidDeliveryPointsList() {
+  return (deliveryPointsCache || []).filter(p => p.isActive);
+}
+
+function bidDestinationOptionsHtml(preselectedId) {
+  const list = bidDeliveryPointsList();
+  const head = `<option value="">-- selecione o ponto --</option>`;
+  const body = list
+    .map(p => {
+      const sel =
+        preselectedId != null && preselectedId !== "" && String(p.id) === String(preselectedId) ? " selected" : "";
+      const label = `${p.name} (${p.city}/${p.state})`;
+      return `<option value="${p.id}"${sel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  return head + body;
+}
+
+function bidDestinationDeliveryPointSelectHtml(preselectedId) {
+  return `<select data-key="Destination" class="bid-lane-dest-select" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px">${bidDestinationOptionsHtml(preselectedId)}</select>`;
+}
+
+function brazilMacroRegionFromUf(uf) {
+  const u = (uf || "").trim().toUpperCase();
+  if (u.length !== 2) return "";
+  const N = ["AC", "AM", "AP", "PA", "RO", "RR", "TO"];
+  const NE = ["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"];
+  const CO = ["DF", "GO", "MT", "MS"];
+  const SE = ["ES", "MG", "RJ", "SP"];
+  const S = ["PR", "RS", "SC"];
+  if (N.includes(u)) return "N";
+  if (NE.includes(u)) return "NE";
+  if (CO.includes(u)) return "CO";
+  if (SE.includes(u)) return "SE";
+  if (S.includes(u)) return "S";
+  return "";
+}
+
+/** Região do cadastro ou macro-região derivada da UF (espelha BrazilMacroRegion no backend). */
+function bidEffectiveRegionForPoint(p) {
+  const r = (p.region || "").trim();
+  if (r) return r;
+  return brazilMacroRegionFromUf(p.state);
+}
+
+function bidRefreshDestinationSelectOptions() {
+  document.querySelectorAll('#bidLanesBody select[data-key="Destination"]').forEach(sel => {
+    const cur = sel.value;
+    sel.innerHTML = bidDestinationOptionsHtml(cur);
+    const tr = sel.closest("tr");
+    const regionInput = tr?.querySelector('[data-key="Region"]');
+    if (regionInput && cur) {
+      const pt = deliveryPointsCache.find(x => String(x.id) === String(cur));
+      if (pt) regionInput.value = bidEffectiveRegionForPoint(pt);
+    }
+  });
+}
+
+function bidLanesBodyOnChangeDest(e) {
+  const sel = e.target;
+  if (sel.tagName !== "SELECT" || sel.dataset.key !== "Destination") return;
+  const tr = sel.closest("tr");
+  const regionInput = tr?.querySelector('[data-key="Region"]');
+  if (!regionInput) return;
+  const id = sel.value;
+  if (!id) {
+    regionInput.value = "";
+    return;
+  }
+  const p = deliveryPointsCache.find(x => String(x.id) === String(id));
+  regionInput.value = p ? bidEffectiveRegionForPoint(p) : "";
+}
+
 function setDefaultDeadline() {
   const now = new Date(Date.now() + 86400000);
   document.getElementById("deadline").value = now.toISOString().slice(0, 16);
@@ -74,6 +173,7 @@ function setDefaultDeadline() {
 const SIDEBAR_MENUS = {
   Shipper: [
     { id: "facilities", icon: "&#x1F3E2;", label: "Unidades (CDs)" },
+    { id: "delivery-points", icon: "&#x1F4E6;", label: "Pontos de entrega" },
     { id: "bid-create", icon: "&#x1F4CB;", label: "Criar BID" },
     { id: "template-studio", icon: "&#x1F527;", label: "Template Studio" },
     { divider: true },
@@ -116,10 +216,20 @@ function navigateTo(pageId) {
   document.querySelectorAll(".sb-item").forEach(el => {
     el.classList.toggle("sb-item--active", el.dataset.page === pageId);
   });
+
+  if (isMobileViewport()) {
+    closeMobileSidebar();
+  }
 }
 
 function sidebarToggle() {
   const sb = document.getElementById("sidebar");
+  if (isMobileViewport()) {
+    const open = sb.classList.contains("sidebar--mobile-open");
+    if (open) closeMobileSidebar();
+    else openMobileSidebar();
+    return;
+  }
   if (sidebarPinned) {
     sidebarPinned = false;
     sb.classList.remove("sidebar--pinned");
@@ -132,6 +242,7 @@ function sidebarToggle() {
 }
 
 function sidebarPin() {
+  if (isMobileViewport()) return;
   sidebarPinned = !sidebarPinned;
   const sb = document.getElementById("sidebar");
   if (sidebarPinned) {
@@ -140,6 +251,41 @@ function sidebarPin() {
   } else {
     sb.classList.add("sidebar--collapsed");
     sb.classList.remove("sidebar--pinned");
+  }
+}
+
+function isMobileViewport() {
+  return window.matchMedia("(max-width: 1024px)").matches;
+}
+
+function openMobileSidebar() {
+  const sb = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (!sb) return;
+  sb.classList.add("sidebar--mobile-open");
+  if (backdrop) backdrop.classList.remove("hidden");
+}
+
+function closeMobileSidebar() {
+  const sb = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (!sb) return;
+  sb.classList.remove("sidebar--mobile-open");
+  if (backdrop) backdrop.classList.add("hidden");
+}
+
+function syncSidebarByViewport() {
+  const sb = document.getElementById("sidebar");
+  const pinBtn = document.getElementById("sidebarPinBtn");
+  if (!sb) return;
+  if (isMobileViewport()) {
+    closeMobileSidebar();
+    sb.classList.remove("sidebar--pinned");
+    sb.classList.add("sidebar--collapsed");
+    if (pinBtn) pinBtn.classList.add("hidden");
+    sidebarPinned = false;
+  } else {
+    if (pinBtn) pinBtn.classList.remove("hidden");
   }
 }
 
@@ -168,6 +314,7 @@ async function login() {
   if (userRole === "Shipper") {
     navigateTo("facilities");
     await loadFacilities();
+    await loadDeliveryPoints();
     bidPopulateOriginSelect();
     await loadCarriers();
     await loadTemplates();
@@ -223,6 +370,7 @@ function renderFacilityGrid() {
       </td>
     </tr>`;
   }).join("");
+  applyMobileTableLabels("#facilityGrid");
 }
 
 function facilityShowForm() {
@@ -403,6 +551,151 @@ async function facilityDelete(id, name) {
   });
   if (!res.ok) return alert(await res.text());
   await loadFacilities();
+}
+
+/* ---------- PONTOS DE ENTREGA (destinos BID) ---------- */
+
+async function loadDeliveryPoints() {
+  const res = await fetch(apiUrl("/api/shipper/delivery-points"), { headers: authHeaders() });
+  if (!res.ok) return;
+  deliveryPointsCache = await res.json();
+  renderDeliveryPointGrid();
+  bidRefreshDestinationSelectOptions();
+}
+
+function renderDeliveryPointGrid() {
+  const tbody = document.getElementById("deliveryPointGridBody");
+  if (!tbody) return;
+  if (!deliveryPointsCache.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#8a9ab8;padding:20px">Nenhum ponto cadastrado. Use &quot;Novo ponto&quot; para incluir destinos de entrega.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = deliveryPointsCache
+    .map(p => {
+      const activeCls = p.isActive ? "facility-active" : "facility-inactive";
+      const reg = (p.region || "").trim() || brazilMacroRegionFromUf(p.state) || "—";
+      return `<tr>
+      <td><strong>${escapeHtml(p.name)}</strong></td>
+      <td>${escapeHtml(p.address || "")}</td>
+      <td>${escapeHtml(p.city)}</td>
+      <td>${escapeHtml(p.state)}</td>
+      <td style="font-family:monospace;font-size:12px">${escapeHtml(p.zipCode || "")}</td>
+      <td>${escapeHtml(reg)}</td>
+      <td class="studio-td--center"><span class="${activeCls}">${p.isActive ? "Sim" : "N\u00e3o"}</span></td>
+      <td class="studio-td--center" style="font-size:11px;color:#6c7a8f">${p.latitude != null ? `${p.latitude}, ${p.longitude}` : "—"}</td>
+      <td class="studio-td--actions">
+        <button class="studio-btn studio-btn--outline" style="padding:4px 8px;font-size:12px" onclick="deliveryPointEdit('${p.id}')">Editar</button>
+        <button class="studio-btn--danger" onclick="deliveryPointDelete('${p.id}')">&#x2716;</button>
+      </td>
+    </tr>`;
+    })
+    .join("");
+  applyMobileTableLabels("#deliveryPointGrid");
+}
+
+function deliveryPointShowForm() {
+  document.getElementById("dpEditId").value = "";
+  document.getElementById("dpName").value = "";
+  document.getElementById("dpAddress").value = "";
+  document.getElementById("dpCity").value = "";
+  document.getElementById("dpState").value = "";
+  document.getElementById("dpZip").value = "";
+  document.getElementById("dpRegion").value = "";
+  document.getElementById("dpCepHint").textContent = "";
+  const dpAct = document.getElementById("dpIsActive");
+  if (dpAct) dpAct.checked = true;
+  document.getElementById("dpForm").classList.remove("hidden");
+  document.getElementById("dpName").focus();
+}
+
+function deliveryPointCancelForm() {
+  document.getElementById("dpForm").classList.add("hidden");
+}
+
+async function deliveryPointLookupCep() {
+  const cep = document.getElementById("dpZip").value.replace(/\D/g, "");
+  const hint = document.getElementById("dpCepHint");
+  if (cep.length !== 8) {
+    hint.textContent = "CEP deve ter 8 d\u00edgitos.";
+    hint.style.color = "#c0392b";
+    return;
+  }
+  hint.textContent = "Buscando...";
+  hint.style.color = "#8a9ab8";
+  try {
+    const res = await fetch(apiUrl(`/api/cep/${cep}`), { headers: authHeaders() });
+    if (!res.ok) {
+      hint.textContent = "CEP n\u00e3o encontrado.";
+      hint.style.color = "#c0392b";
+      return;
+    }
+    const data = await res.json();
+    document.getElementById("dpAddress").value = [data.logradouro, data.complemento].filter(Boolean).join(", ");
+    document.getElementById("dpCity").value = data.localidade;
+    document.getElementById("dpState").value = data.uf;
+    hint.textContent = `${data.localidade} - ${data.uf} (${data.bairro})`;
+    hint.style.color = "#1a8754";
+  } catch {
+    hint.textContent = "Erro ao consultar CEP.";
+    hint.style.color = "#c0392b";
+  }
+}
+
+function deliveryPointEdit(id) {
+  const p = deliveryPointsCache.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById("dpEditId").value = p.id;
+  document.getElementById("dpName").value = p.name;
+  document.getElementById("dpAddress").value = p.address || "";
+  document.getElementById("dpCity").value = p.city;
+  document.getElementById("dpState").value = p.state;
+  document.getElementById("dpZip").value = p.zipCode || "";
+  document.getElementById("dpRegion").value = p.region || "";
+  const dpAct = document.getElementById("dpIsActive");
+  if (dpAct) dpAct.checked = !!p.isActive;
+  document.getElementById("dpForm").classList.remove("hidden");
+  document.getElementById("dpName").focus();
+}
+
+async function deliveryPointSave() {
+  const editId = document.getElementById("dpEditId").value;
+  const payload = {
+    name: document.getElementById("dpName").value,
+    address: document.getElementById("dpAddress").value,
+    city: document.getElementById("dpCity").value,
+    state: document.getElementById("dpState").value,
+    zipCode: document.getElementById("dpZip").value,
+    region: document.getElementById("dpRegion").value || null,
+    country: "Brasil",
+    latitude: null,
+    longitude: null,
+    isActive: document.getElementById("dpIsActive") ? document.getElementById("dpIsActive").checked : true
+  };
+  if (!payload.name || !payload.city || !payload.state) {
+    return alert("Preencha nome, cidade e UF.");
+  }
+  const endpoint = editId ? `/api/shipper/delivery-points/${editId}` : "/api/shipper/delivery-points";
+  const method = editId ? "PUT" : "POST";
+  const res = await fetch(apiUrl(endpoint), {
+    method,
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) return alert(await res.text());
+  deliveryPointCancelForm();
+  await loadDeliveryPoints();
+}
+
+async function deliveryPointDelete(id) {
+  const p = deliveryPointsCache.find(x => x.id === id);
+  const name = p ? p.name : "este ponto";
+  if (!confirm(`Remover o ponto "${name}"?`)) return;
+  const res = await fetch(apiUrl(`/api/shipper/delivery-points/${id}`), {
+    method: "DELETE",
+    headers: authHeaders()
+  });
+  if (!res.ok) return alert(await res.text());
+  await loadDeliveryPoints();
 }
 
 /* ---------- BID TEMPLATE STUDIO (NDD-inspired grid) ---------- */
@@ -871,7 +1164,7 @@ function bidAddLaneRow() {
   if (!bidTemplateColumns.length) {
     tr.innerHTML = `
       <td>${bidOriginFacilitySelectHtml(mainOriginId)}</td>
-      <td><input type="text" data-key="Destination" placeholder="Curitiba" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+      <td>${bidDestinationDeliveryPointSelectHtml("")}</td>
       <td><input type="text" data-key="FreightType" placeholder="CIF" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
       <td><input type="number" data-key="VolumeForecast" placeholder="0" step="0.01" style="width:80px;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
       <td><input type="text" data-key="VehicleType" placeholder="Carreta" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
@@ -883,6 +1176,9 @@ function bidAddLaneRow() {
       .map(c => {
         if ((c.key || "").toLowerCase() === "origin") {
           return `<td>${bidOriginFacilitySelectHtml(mainOriginId)}</td>`;
+        }
+        if ((c.key || "").toLowerCase() === "destination") {
+          return `<td>${bidDestinationDeliveryPointSelectHtml("")}</td>`;
         }
         const inputType = c.dataType === "number" || c.dataType === "currency" ? "number" : "text";
         const step = inputType === "number" ? ' step="0.01"' : "";
@@ -905,16 +1201,23 @@ function bidCollectLanes() {
   const rows = [...document.querySelectorAll("#bidLanesBody tr")];
   return rows.map(tr => {
     const fields = tr.querySelectorAll("[data-key]");
-    const lane = {};
+    const lane = { destinationDeliveryPointId: null };
     fields.forEach(el => {
       const k = el.dataset.key;
       if (!k) return;
       if (el.tagName === "SELECT") {
         const id = el.value;
-        if (!id) lane[k] = "";
-        else {
+        if (!id) {
+          lane[k] = "";
+        } else if (k === "Origin") {
           const fac = facilitiesCache.find(x => String(x.id) === String(id));
           lane[k] = fac ? `${fac.name} (${fac.city}/${fac.state})` : "";
+        } else if (k === "Destination") {
+          const pt = deliveryPointsCache.find(x => String(x.id) === String(id));
+          lane[k] = pt ? `${pt.name} (${pt.city}/${pt.state})` : "";
+          lane.destinationDeliveryPointId = id;
+        } else {
+          lane[k] = el.value;
         }
       } else {
         lane[k] = el.type === "number" ? (parseFloat(el.value) || 0) : el.value.trim();
@@ -923,6 +1226,7 @@ function bidCollectLanes() {
     return {
       origin: lane.Origin || "",
       destination: lane.Destination || "",
+      destinationDeliveryPointId: lane.destinationDeliveryPointId,
       freightType: lane.FreightType || "",
       volumeForecast: parseFloat(lane.VolumeForecast) || 0,
       slaRequirements: lane.SlaRequirements || "",
@@ -931,12 +1235,14 @@ function bidCollectLanes() {
       paymentTerms: lane.PaymentTerms || "",
       region: lane.Region || ""
     };
-  }).filter(l => l.origin || l.destination);
+  }).filter(l => l.origin && l.destinationDeliveryPointId);
 }
 
 async function bidCreate() {
   const lanes = bidCollectLanes();
-  if (!lanes.length) return alert("Adicione pelo menos uma rota com Origem ou Destino.");
+  if (!lanes.length) {
+    return alert("Adicione ao menos uma rota com origem (CD) e destino (ponto de entrega cadastrado) em cada linha.");
+  }
 
   const deadlineVal = document.getElementById("deadline").value;
   const payload = {
@@ -988,7 +1294,7 @@ async function bidGenerateRoutes() {
     const suggestions = await res.json();
     if (!suggestions.length) {
       status.style.color = "#e67e22";
-      status.textContent = "Nenhuma rota calculada. Verifique se os CEPs das unidades estão corretos e se há API key configurada.";
+      status.textContent = "Nenhuma rota calculada. Verifique CEP/coordenadas dos pontos de entrega e se a API key ORS está configurada.";
       return;
     }
 
@@ -1001,7 +1307,7 @@ async function bidGenerateRoutes() {
       const tbody = document.getElementById("bidLanesBody");
       const tr = document.createElement("tr");
       tr.dataset.originFacilityId = s.originFacilityId;
-      tr.dataset.destFacilityId   = s.destFacilityId;
+      tr.dataset.destDeliveryPointId = s.destDeliveryPointId;
 
       const durText = s.durationHours < 1
         ? `${Math.round(s.durationHours * 60)}min`
@@ -1017,16 +1323,14 @@ async function bidGenerateRoutes() {
         <td title="${title}">
           ${bidOriginFacilitySelectHtml(s.originFacilityId)}
         </td>
-        <td>
-          <input type="text" data-key="Destination"
-            value="${s.destName} – ${s.destCity}/${s.destState}"
-            style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" />
+        <td title="${title}">
+          ${bidDestinationDeliveryPointSelectHtml(s.destDeliveryPointId)}
         </td>
         <td><input type="text" data-key="FreightType" placeholder="CIF" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
         <td><input type="number" data-key="VolumeForecast" value="0" step="0.01" style="width:80px;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
-        <td><input type="text" data-key="VehicleType" value="${s.suggestedVehicleType}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td><input type="text" data-key="VehicleType" value="${escapeHtml(s.suggestedVehicleType)}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
         <td><input type="text" data-key="SlaRequirements" placeholder="48h" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
-        <td><input type="text" data-key="Region" value="${s.destState}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
+        <td><input type="text" data-key="Region" value="${escapeHtml(s.destRegion || "")}" style="width:100%;padding:5px 8px;border:1px solid #d6e0f0;border-radius:3px;font-size:13px" /></td>
         <td class="studio-td--center" style="white-space:nowrap">
           <span title="${title}" style="font-size:11px;color:#0f6ebd;font-weight:600;margin-right:4px">${durText}</span>
           <span title="${title}" style="font-size:10px;color:#6c7a8f">${s.distanceKm}km</span>
@@ -1055,7 +1359,7 @@ async function loadBids() {
     <td><span class="facility-badge ${b.status === "Open" ? "facility-badge--matriz" : "facility-badge--filial"}">${b.status}</span></td>
   </tr>`).join("");
   document.getElementById("bidList").innerHTML = tableRows
-    ? `<table class="studio-grid"><thead><tr>
+    ? `<table class="studio-grid mobile-card-table"><thead><tr>
         <th class="studio-grid__th">T\u00edtulo</th>
         <th class="studio-grid__th">Leil\u00e3o</th>
         <th class="studio-grid__th">Deadline</th>
@@ -1064,6 +1368,7 @@ async function loadBids() {
         <th class="studio-grid__th">Status</th>
       </tr></thead><tbody>${tableRows}</tbody></table>`
     : '<p style="color:#8a9ab8;text-align:center;padding:20px">Nenhum BID criado ainda.</p>';
+  applyMobileTableLabels("#bidList .mobile-card-table");
 
   const options = bids.map(b => `<option value="${b.id}" data-deadline="${b.deadlineUtc}">${b.title}</option>`).join("");
   document.getElementById("bidToInvite").innerHTML = options;
@@ -1175,7 +1480,7 @@ async function loadLanePricingForm() {
   const res = await fetch(apiUrl(`/api/carrier/bids/${bidId}`), { headers: authHeaders() });
   const lanes = await res.json();
   document.getElementById("lanePricing").innerHTML = lanes.map(l => `
-    <div class="grid3">
+    <div class="grid3 carrier-lane-card">
       <span>${l.origin} -> ${l.destination} (${l.region || "N/A"})</span>
       <span>${l.vehicleType} | Vol ${l.volumeForecast}</span>
       <input type="number" step="0.01" class="lane-price" data-lane="${l.id}" placeholder="Price per lane" />
@@ -1253,6 +1558,26 @@ function initDragDrop() {
       if (bidOrigin.value) bidSyncLaneOriginSelects(bidOrigin.value);
     });
   }
+
+  const bidLanesBody = document.getElementById("bidLanesBody");
+  if (bidLanesBody && !bidLanesBody.dataset.destDelegation) {
+    bidLanesBody.dataset.destDelegation = "1";
+    bidLanesBody.addEventListener("change", bidLanesBodyOnChangeDest);
+  }
+
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (backdrop) {
+    backdrop.addEventListener("click", closeMobileSidebar);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isMobileViewport()) {
+      closeMobileSidebar();
+    }
+  });
+
+  window.addEventListener("resize", syncSidebarByViewport);
+  syncSidebarByViewport();
 }
 
 /* ---------- LOG VIEWER ---------- */
@@ -1357,6 +1682,7 @@ function renderLogTable(data) {
     </table>
     ${pagination}
   `;
+  applyMobileTableLabels(".log-table");
 }
 
 function renderLogPagination(data) {

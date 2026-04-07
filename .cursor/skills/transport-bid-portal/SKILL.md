@@ -33,6 +33,7 @@ results via dashboards. **Admins** manage mapping profiles and view structured l
 
 ```
 TransportBidPortal/
+├── docs/                        # Feature notes, roadmaps (see docs/README.md)
 ├── Controllers/
 │   ├── AuthController.cs        # Login, Register
 │   ├── ShipperController.cs     # Templates, BIDs, Facilities, Route Engine

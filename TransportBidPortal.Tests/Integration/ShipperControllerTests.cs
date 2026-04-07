@@ -54,7 +54,7 @@ public class ShipperControllerTests : IClassFixture<TestWebApplicationFactory>, 
     public async Task CreateFacility_Matriz_Returns200()
     {
         var request = new SaveFacilityRequest(
-            "CD Principal", "Matriz", "12345678000100", "Rua A, 100",
+            "CD Principal", "Matriz", "11222333000101", "Rua A, 100",
             "Sao Paulo", "SP", "01001000", "Brasil", null, null, true);
 
         var response = await _client.PostAsJsonAsync("/api/shipper/facilities", request);
@@ -100,7 +100,7 @@ public class ShipperControllerTests : IClassFixture<TestWebApplicationFactory>, 
             "ANTT", 100000m, null, null,
             new List<BidLaneInput>
             {
-                new("Sao Paulo", "Curitiba", "CIF", 500, "48h", "Truck", null, null, "Sul")
+                new("Sao Paulo", "Curitiba", TestSeedIds.DeliveryPointCuritibaId, "CIF", 500, "48h", "Truck", null, null, "Sul")
             });
 
         var response = await _client.PostAsJsonAsync("/api/shipper/bids", request);
@@ -139,15 +139,9 @@ public class ShipperControllerTests : IClassFixture<TestWebApplicationFactory>, 
 
     private Guid SeedShipper()
     {
-        var id = Guid.NewGuid();
-        using var db = _factory.CreateDbContext();
-        db.Users.Add(new AppUser
+        using (var db = _factory.CreateDbContext())
         {
-            Id = id, Name = "Test Shipper", Email = $"shipper_{id:N}@test.com",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Test123!"),
-            Role = UserRole.Shipper, Company = "TestCo"
-        });
-        db.SaveChanges();
-        return id;
+            return TestSeedIds.DemoShipperId;
+        }
     }
 }

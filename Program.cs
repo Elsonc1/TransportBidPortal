@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using TransportBidPortal.Data;
@@ -54,6 +55,7 @@ builder.Services.AddHttpClient("ViaCEP");
 builder.Services.AddScoped<ICepService, CepService>();
 builder.Services.AddScoped<IFreightService, FreightService>();
 builder.Services.AddScoped<IRouteEngineService, RouteEngineService>();
+builder.Services.AddScoped<ITollEstimator, NoOpTollEstimator>();
 
 var app = builder.Build();
 
@@ -64,8 +66,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
+var staticContentTypes = new FileExtensionContentTypeProvider();
+staticContentTypes.Mappings[".webmanifest"] = "application/manifest+json";
+
 app.UseStaticFiles(new StaticFileOptions
 {
+    ContentTypeProvider = staticContentTypes,
     OnPrepareResponse = ctx =>
     {
         ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
