@@ -1,0 +1,51 @@
+# Portal ASP.NET Core — desenvolvimento.
+# Gera pasta publicável e envia como artefato (web-publish-dev). Use para implantar no seu host dev.
+# Próximo passo: job extra com Azure App Service, FTP, SSH, etc., usando secrets do repositório.
+name: Deploy — Web (dev)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: "10.0.x"
+
+jobs:
+  build-and-publish-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore TransportBidPortal.sln
+
+      - name: Build
+        run: dotnet build TransportBidPortal.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test TransportBidPortal.sln -c Release --no-build --verbosity normal
+
+      - name: Publish
+        run: dotnet publish TransportBidPortal.csproj -c Release -o "${{ github.workspace }}/publish/web" --no-build
+
+      - name: Upload artifact (web)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-publish-dev
+          path: publish/web
+          if-no-files-found: error

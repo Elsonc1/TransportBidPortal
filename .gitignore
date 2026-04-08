@@ -4,6 +4,19 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # User-specific files
+.cursor/
+.vscode/
+agent-handoffs
+agents
+hooks
+instructions
+mcp-server
+prompts
+skills
+copilot-instructions.md
+
+
+# User-specific files
 docs/
 
 # User-specific files

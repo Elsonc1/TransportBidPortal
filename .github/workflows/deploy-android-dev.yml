@@ -1,0 +1,61 @@
+# App Android (Capacitor) — desenvolvimento.
+# npm ci + cap sync + assembleDebug. APK em artefato android-debug-dev.
+# O app aponta para API conforme capacitor.config.json / buildType; ajuste server.url para o host dev.
+name: Deploy — Android (dev)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-android-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install JS dependencies (Capacitor CLI)
+        run: npm ci
+
+      - name: Capacitor sync (wwwroot -> android)
+        run: npx cap sync android
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0"
+
+      - name: Gradle wrapper executable
+        run: chmod +x android/gradlew
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload artifact (APK)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-dev
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
